@@ -7,6 +7,10 @@ from app.services.job_service import JobService
 def build_router(job_service: JobService) -> APIRouter:
     router = APIRouter()
 
+    @router.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
     @router.post("/cards", response_model=CardJobResponse)
     async def create_cards(
         image: UploadFile = File(...),
@@ -26,4 +30,3 @@ def build_router(job_service: JobService) -> APIRouter:
         return job
 
     return router
-
