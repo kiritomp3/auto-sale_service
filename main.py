@@ -15,4 +15,10 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
-app.include_router(build_router(container.job_service))
+app.include_router(
+    build_router(
+        job_service=container.job_service,
+        ozon_auth_service=container.ozon_auth_service,
+        ozon_base_url=settings.ozon_base_url,
+    )
+)

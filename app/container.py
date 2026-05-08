@@ -1,10 +1,16 @@
+from __future__ import annotations
+
 from concurrent.futures import ThreadPoolExecutor
+
+import redis
 
 from app.clients.openai_client import OpenAIClient
 from app.config import Settings
 from app.repositories.job_repository import InMemoryJobRepository
+from app.repositories.ozon_auth_repository import RedisOzonAuthRepository
 from app.services.card_generation_service import CardGenerationService
 from app.services.job_service import JobService
+from app.services.ozon_auth_service import OzonAuthService
 
 
 class Container:
@@ -30,3 +36,12 @@ class Container:
             output_dir=settings.output_dir,
         )
 
+        self.redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=False)
+        self.ozon_auth_repository = RedisOzonAuthRepository(
+            redis_client=self.redis_client,
+            key_prefix=settings.redis_ozon_session_prefix,
+        )
+        self.ozon_auth_service = OzonAuthService(
+            repository=self.ozon_auth_repository,
+            session_ttl_seconds=settings.ozon_session_ttl_seconds,
+        )

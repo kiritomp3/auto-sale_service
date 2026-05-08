@@ -3,3 +3,5 @@ uvicorn
 python-multipart
 openai
 python-dotenv
+httpx
+redis
