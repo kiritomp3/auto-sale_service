@@ -99,7 +99,7 @@ curl -X POST "https://api.auto-sale.pro/cards" \
 curl "https://api.auto-sale.pro/crads/<job_id>"
 ```
 
-## 8. Обновление сервиса ()
+## 8. Обновление сервиса ()()
 
 ```bash
 git pull
