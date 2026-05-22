@@ -3,10 +3,24 @@ services:
     build: .
     container_name: wb-cards-api
     restart: unless-stopped
+    depends_on:
+      - redis
     ports:
       - "127.0.0.1:18000:8000"
     env_file:
       - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./output:/app/output
       - ./tmp:/app/tmp
+
+  redis:
+    image: redis:7-alpine
+    container_name: wb-cards-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:

@@ -11,7 +11,10 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/kiritomp3/auto-sale_service
-  CONTAINER_NAME: auto-sale_service
+  API_CONTAINER_NAME: auto-sale_service
+  REDIS_CONTAINER_NAME: auto-sale-redis
+  NETWORK_NAME: auto-sale-network
+  REDIS_VOLUME_NAME: auto-sale-redis-data
 
 jobs:
   build-and-push:
@@ -51,13 +54,26 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             docker pull ghcr.io/kiritomp3/auto-sale_service:latest
+            docker pull redis:7-alpine
 
-            docker stop auto-sale_service || true
-            docker rm auto-sale_service || true
+            docker network create ${{ env.NETWORK_NAME }} || true
+
+            docker stop ${{ env.API_CONTAINER_NAME }} ${{ env.REDIS_CONTAINER_NAME }} || true
+            docker rm ${{ env.API_CONTAINER_NAME }} ${{ env.REDIS_CONTAINER_NAME }} || true
+
+            docker volume create ${{ env.REDIS_VOLUME_NAME }} || true
+            docker run -d \
+              --name ${{ env.REDIS_CONTAINER_NAME }} \
+              --network ${{ env.NETWORK_NAME }} \
+              --restart unless-stopped \
+              -v ${{ env.REDIS_VOLUME_NAME }}:/data \
+              redis:7-alpine
 
             docker run -d \
-              --name auto-sale_service \
+              --name ${{ env.API_CONTAINER_NAME }} \
+              --network ${{ env.NETWORK_NAME }} \
               --restart unless-stopped \
-              -p 8000:8000 \
+              -p 127.0.0.1:18000:8000 \
               --env-file /root/auto-sale_service/.env \
+              -e REDIS_URL=redis://${{ env.REDIS_CONTAINER_NAME }}:6379/0 \
               ghcr.io/kiritomp3/auto-sale_service:latest
