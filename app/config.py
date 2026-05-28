@@ -20,7 +20,7 @@ class Settings:
     output_dir: Path = Path("output")
     temp_dir: Path = Path("tmp")
     image_model: str = "gpt-image-1"
-    text_model: str = "gpt-5"
+    text_model: str = "gpt-4o"
     worker_count: int = 2
 
     @classmethod

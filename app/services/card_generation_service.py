@@ -1,5 +1,6 @@
 import base64
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -8,10 +9,10 @@ from app.prompts import BASE_STYLE, PRODUCT_LOCK_RULES
 
 
 class CardGenerationService:
-    def __init__(self, client: OpenAIClient, output_dir: Path, image_sizes: list[str] | None = None):
+    def __init__(self, client: OpenAIClient, output_dir: Path, image_size: str = "1024x1280"):
         self._client = client
         self._output_dir = output_dir
-        self._image_sizes = image_sizes or ["1024x1280", "1024x1536"]
+        self._image_size = image_size
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -117,25 +118,24 @@ class CardGenerationService:
             prompt += f"\nДополнительное уточнение пользователя: {refinement_prompt}"
         return prompt
 
-    def _generate_cards(self, analysis: dict[str, Any], refinement_prompt: str, job_id: str, n_cards: int = 3) -> list[str]:
-        result_paths: list[str] = []
-        for index in range(n_cards):
-            prompt = self._build_card_prompt(analysis, index, refinement_prompt)
-            generated_b64 = None
-            last_error = None
-            for size in self._image_sizes:
-                try:
-                    generated_b64 = self._client.generate_card_image_b64(prompt, size)
-                    break
-                except Exception as error:
-                    last_error = error
-            if generated_b64 is None:
-                raise RuntimeError(f"Не удалось сгенерировать карточку {index + 1}: {last_error}")
+    def _generate_single_card(self, analysis: dict[str, Any], refinement_prompt: str, job_id: str, index: int) -> tuple[int, str]:
+        prompt = self._build_card_prompt(analysis, index, refinement_prompt)
+        generated_b64 = self._client.generate_card_image_b64(prompt, self._image_size)
+        output_path = self._output_dir / f"{job_id}_card_{index + 1}.png"
+        self._save_b64_png(generated_b64, output_path)
+        return index, str(output_path)
 
-            output_path = self._output_dir / f"{job_id}_card_{index + 1}.png"
-            self._save_b64_png(generated_b64, output_path)
-            result_paths.append(str(output_path))
-        return result_paths
+    def _generate_cards(self, analysis: dict[str, Any], refinement_prompt: str, job_id: str, n_cards: int = 3) -> list[str]:
+        result_paths: dict[int, str] = {}
+        with ThreadPoolExecutor(max_workers=n_cards) as executor:
+            futures = {
+                executor.submit(self._generate_single_card, analysis, refinement_prompt, job_id, i): i
+                for i in range(n_cards)
+            }
+            for future in as_completed(futures):
+                index, path = future.result()
+                result_paths[index] = path
+        return [result_paths[i] for i in range(n_cards)]
 
     def build_result(self, image_path: Path, refinement_prompt: str, job_id: str) -> dict[str, Any]:
         analysis_prompt = self._build_analyze_prompt(refinement_prompt)

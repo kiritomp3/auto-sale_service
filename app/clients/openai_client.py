@@ -47,7 +47,7 @@ class OpenAIClient:
             model=self._image_model,
             prompt=prompt,
             size=size,
-            quality="high",
+            quality="medium",
         )
         return response.data[0].b64_json
 
