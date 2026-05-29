@@ -54,11 +54,12 @@ def build_router(
     async def create_cards(
         image: UploadFile = File(...),
         refinement_prompt: str = Form(default=""),
+        size: str = Form(default=""),
     ) -> CardJobResponse:
         if not image.filename:
             raise HTTPException(status_code=400, detail="Файл изображения обязателен")
         payload = await image.read()
-        job = job_service.enqueue(payload, image.filename, refinement_prompt)
+        job = job_service.enqueue(payload, image.filename, refinement_prompt, size)
         return CardJobResponse(job_id=job.job_id, status=job.status)
 
     @router.get("/crads/{job_id}", response_model=JobState)

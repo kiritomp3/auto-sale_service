@@ -36,6 +36,7 @@ cd wbcards
 
 ```env
 OPENAI_API_KEY=sk-...
+GENERATION_IMAGE_SIZE=1024x1536
 ```
 
 ## 4. Запуск API через Docker Compose

@@ -7,14 +7,22 @@ from typing import Any
 
 from app.clients.kie_ai_client import KieAIImageClient
 from app.clients.openai_client import OpenAIClient
+from app.config import DEFAULT_IMAGE_SIZE, normalize_image_size
 from app.prompts import DEFAULT_STYLE, PRODUCT_LOCK_RULES
 
 
 class CardGenerationService:
-    def __init__(self, text_client: OpenAIClient, image_client: KieAIImageClient, output_dir: Path):
+    def __init__(
+        self,
+        text_client: OpenAIClient,
+        image_client: KieAIImageClient,
+        output_dir: Path,
+        image_size: str = DEFAULT_IMAGE_SIZE,
+    ):
         self._text_client = text_client
         self._image_client = image_client
         self._output_dir = output_dir
+        self._image_size = normalize_image_size(image_size)
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -120,9 +128,10 @@ class CardGenerationService:
         refinement_prompt: str,
         job_id: str,
         index: int,
+        image_size: str,
     ) -> tuple[int, str]:
         prompt = self._build_card_prompt(analysis, index, refinement_prompt)
-        generated_b64 = self._image_client.generate_card_image_b64(prompt, image_path)
+        generated_b64 = self._image_client.generate_card_image_b64(prompt, image_path, image_size)
         output_path = self._output_dir / f"{job_id}_card_{index + 1}.png"
         output_path.write_bytes(__import__("base64").b64decode(generated_b64))
         return index, str(output_path)
@@ -133,12 +142,21 @@ class CardGenerationService:
         image_path: Path,
         refinement_prompt: str,
         job_id: str,
+        image_size: str,
         n_cards: int = 3,
     ) -> list[str]:
         result_paths: dict[int, str] = {}
         with ThreadPoolExecutor(max_workers=n_cards) as executor:
             futures = {
-                executor.submit(self._generate_single_card, analysis, image_path, refinement_prompt, job_id, i): i
+                executor.submit(
+                    self._generate_single_card,
+                    analysis,
+                    image_path,
+                    refinement_prompt,
+                    job_id,
+                    i,
+                    image_size,
+                ): i
                 for i in range(n_cards)
             }
             for future in as_completed(futures):
@@ -146,10 +164,17 @@ class CardGenerationService:
                 result_paths[index] = path
         return [result_paths[i] for i in range(n_cards)]
 
-    def build_result(self, image_path: Path, refinement_prompt: str, job_id: str) -> dict[str, Any]:
+    def build_result(
+        self,
+        image_path: Path,
+        refinement_prompt: str,
+        job_id: str,
+        image_size: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_image_size = normalize_image_size(image_size or self._image_size)
         analysis_prompt = self._build_analyze_prompt(refinement_prompt)
         analysis = self._text_client.analyze_product(image_path=image_path, prompt=analysis_prompt)
-        cards = self._generate_cards(analysis, image_path, refinement_prompt, job_id)
+        cards = self._generate_cards(analysis, image_path, refinement_prompt, job_id, normalized_image_size)
         listing_prompt = self._build_listing_prompt(analysis, refinement_prompt)
         listing_content = self._text_client.generate_listing(listing_prompt)
 
@@ -159,6 +184,7 @@ class CardGenerationService:
             "input": {
                 "image_path": str(image_path),
                 "refinement_prompt": refinement_prompt,
+                "image_size": normalized_image_size,
             },
             "analysis": analysis,
             "cards": cards,
