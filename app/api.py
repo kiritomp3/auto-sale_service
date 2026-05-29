@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.clients.ozon_seller_client import OzonSellerClient
@@ -22,6 +25,7 @@ def build_router(
     job_service: JobService,
     ozon_auth_service: OzonAuthService,
     ozon_base_url: str,
+    output_dir: Path,
 ) -> APIRouter:
     router = APIRouter()
     security = HTTPBearer(auto_error=False)
@@ -34,6 +38,18 @@ def build_router(
     @router.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @router.get("/output/{filename:path}")
+    def get_output_file(filename: str) -> FileResponse:
+        safe_name = Path(filename).name
+        if safe_name != filename or not safe_name.lower().endswith((".gif", ".jpg", ".jpeg", ".png", ".webp")):
+            raise HTTPException(status_code=404, detail="File not found")
+
+        file_path = output_dir / safe_name
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        return FileResponse(file_path, filename=safe_name)
 
     @router.post("/cards", response_model=CardJobResponse)
     async def create_cards(
