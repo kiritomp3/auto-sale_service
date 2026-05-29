@@ -1,23 +1,21 @@
-import base64
+from __future__ import annotations
+
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from app.clients.gemini_client import GeminiImageClient
 from app.clients.openai_client import OpenAIClient
-from app.prompts import BASE_STYLE, PRODUCT_LOCK_RULES
+from app.prompts import DEFAULT_STYLE, PRODUCT_LOCK_RULES
 
 
 class CardGenerationService:
-    def __init__(self, client: OpenAIClient, output_dir: Path, image_size: str = "1024x1280"):
-        self._client = client
+    def __init__(self, text_client: OpenAIClient, image_client: GeminiImageClient, output_dir: Path):
+        self._text_client = text_client
+        self._image_client = image_client
         self._output_dir = output_dir
-        self._image_size = image_size
         self._output_dir.mkdir(parents=True, exist_ok=True)
-
-    @staticmethod
-    def _save_b64_png(b64_data: str, file_path: Path) -> None:
-        file_path.write_bytes(base64.b64decode(b64_data))
 
     @staticmethod
     def _build_analyze_prompt(refinement_prompt: str) -> str:
@@ -72,24 +70,26 @@ class CardGenerationService:
             selling_points.append("Качественные материалы")
 
         offer = analysis.get("main_offer") or "Хит продаж"
+        style = refinement_prompt.strip() if refinement_prompt and refinement_prompt.strip() else DEFAULT_STYLE
+
         variants = [
             {
                 "name": "Card 1 HERO",
-                "layout": "ГЛАВНОЕ ФОТО: 80% площади — товар крупным планом. Минимум текста: заголовок + 2 плашки + оффер.",
+                "layout": "80% площади — товар крупным планом. Минимум текста: заголовок + 2 плашки + оффер.",
                 "title": short_title,
                 "points": [selling_points[0], selling_points[1]],
                 "offer": offer,
             },
             {
                 "name": "Card 2 INFO",
-                "layout": "ИНФОГРАФИКА: товар 45-55% площади, вокруг 4 плашки преимуществ, визуальные указатели/линии к деталям товара.",
+                "layout": "Товар 45-55% площади, вокруг 4 плашки преимуществ с визуальными указателями к деталям товара.",
                 "title": f"Преимущества {product_name}",
                 "points": [selling_points[2], selling_points[3], selling_points[4], selling_points[5]],
                 "offer": "4 ключевых плюса",
             },
             {
                 "name": "Card 3 OFFER",
-                "layout": "ОФФЕРНАЯ: товар 60-65% площади, крупный оффер-бейдж, блок 'для кого/где использовать', акцент на выгоде.",
+                "layout": "Товар 60-65% площади, крупный оффер-бейдж, блок «для кого / где использовать», акцент на выгоде.",
                 "title": f"{product_name}: максимум пользы",
                 "points": [selling_points[0], selling_points[3], selling_points[5]],
                 "offer": offer,
@@ -98,38 +98,47 @@ class CardGenerationService:
         selected = variants[card_index % len(variants)]
         points_text = ", ".join(selected["points"])
 
-        prompt = f"""
-Создай вертикальное главное фото карточки товара для маркетплейса в ярком технологичном рекламном стиле.
-В центре размести крупный реалистичный 3D-рендер товара: {product_name}, под динамичным углом, с чистым светом, мягкими тенями и премиальной подачей.
-Добавь крупный продающий заголовок на русском: {selected['title']}.
-Используй информационные плашки с ключевыми преимуществами: {points_text}.
-Добавь круглый оранжевый бейдж с главным оффером: {selected['offer']}.
+        return f"""
+Используй товар с прикреплённого фото как визуальный референс для создания рекламной карточки маркетплейса.
 
-{BASE_STYLE}
+СТИЛЬ: {style}
+
+СЦЕНАРИЙ {selected['name']}: {selected['layout']}
+Заголовок: {selected['title']}
+Преимущества: {points_text}
+Оффер-бейдж: {selected['offer']}
 
 {PRODUCT_LOCK_RULES}
 
-Жестко соблюдай сценарий {selected['name']}: {selected['layout']}
-Сделай композицию заметно отличной от других сценариев по количеству текста, расположению плашек и доле товара в кадре.
-Без лишних деталей, без чужих брендов, без орфографических ошибок.
+Формат: вертикальный 4:5, весь текст на русском, без орфографических ошибок, без чужих брендов.
 """.strip()
 
-        if refinement_prompt:
-            prompt += f"\nДополнительное уточнение пользователя: {refinement_prompt}"
-        return prompt
-
-    def _generate_single_card(self, analysis: dict[str, Any], refinement_prompt: str, job_id: str, index: int) -> tuple[int, str]:
+    def _generate_single_card(
+        self,
+        analysis: dict[str, Any],
+        image_path: Path,
+        refinement_prompt: str,
+        job_id: str,
+        index: int,
+    ) -> tuple[int, str]:
         prompt = self._build_card_prompt(analysis, index, refinement_prompt)
-        generated_b64 = self._client.generate_card_image_b64(prompt, self._image_size)
+        generated_b64 = self._image_client.generate_card_image_b64(prompt, image_path)
         output_path = self._output_dir / f"{job_id}_card_{index + 1}.png"
-        self._save_b64_png(generated_b64, output_path)
+        output_path.write_bytes(__import__("base64").b64decode(generated_b64))
         return index, str(output_path)
 
-    def _generate_cards(self, analysis: dict[str, Any], refinement_prompt: str, job_id: str, n_cards: int = 3) -> list[str]:
+    def _generate_cards(
+        self,
+        analysis: dict[str, Any],
+        image_path: Path,
+        refinement_prompt: str,
+        job_id: str,
+        n_cards: int = 3,
+    ) -> list[str]:
         result_paths: dict[int, str] = {}
         with ThreadPoolExecutor(max_workers=n_cards) as executor:
             futures = {
-                executor.submit(self._generate_single_card, analysis, refinement_prompt, job_id, i): i
+                executor.submit(self._generate_single_card, analysis, image_path, refinement_prompt, job_id, i): i
                 for i in range(n_cards)
             }
             for future in as_completed(futures):
@@ -139,10 +148,10 @@ class CardGenerationService:
 
     def build_result(self, image_path: Path, refinement_prompt: str, job_id: str) -> dict[str, Any]:
         analysis_prompt = self._build_analyze_prompt(refinement_prompt)
-        analysis = self._client.analyze_product(image_path=image_path, prompt=analysis_prompt)
-        cards = self._generate_cards(analysis, refinement_prompt, job_id)
+        analysis = self._text_client.analyze_product(image_path=image_path, prompt=analysis_prompt)
+        cards = self._generate_cards(analysis, image_path, refinement_prompt, job_id)
         listing_prompt = self._build_listing_prompt(analysis, refinement_prompt)
-        listing_content = self._client.generate_listing(listing_prompt)
+        listing_content = self._text_client.generate_listing(listing_prompt)
 
         return {
             "job_id": job_id,
@@ -155,4 +164,3 @@ class CardGenerationService:
             "cards": cards,
             "listing_content": listing_content,
         }
-

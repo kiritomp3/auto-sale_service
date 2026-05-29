@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import redis
 
+from app.clients.gemini_client import GeminiImageClient
 from app.clients.openai_client import OpenAIClient
 from app.config import Settings
 from app.repositories.job_repository import InMemoryJobRepository
@@ -21,10 +22,15 @@ class Container:
         self.openai_client = OpenAIClient(
             api_key=settings.openai_api_key,
             text_model=settings.text_model,
-            image_model=settings.image_model,
+            image_model="",  # не используется — изображения через Gemini
+        )
+        self.gemini_image_client = GeminiImageClient(
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_image_model,
         )
         self.card_generation_service = CardGenerationService(
-            client=self.openai_client,
+            text_client=self.openai_client,
+            image_client=self.gemini_image_client,
             output_dir=settings.output_dir,
         )
         self.executor = ThreadPoolExecutor(max_workers=settings.worker_count)
