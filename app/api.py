@@ -39,6 +39,7 @@ def build_router(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @router.head("/output/{filename:path}")
     @router.get("/output/{filename:path}")
     def get_output_file(filename: str) -> FileResponse:
         safe_name = Path(filename).name
