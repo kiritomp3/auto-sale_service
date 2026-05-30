@@ -18,9 +18,12 @@ class Settings:
     ozon_session_ttl_seconds: int = 60 * 60 * 12
     redis_url: str = "redis://localhost:6379/0"
     redis_ozon_session_prefix: str = "ozon:session"
+    redis_job_key_prefix: str = "job"
+    job_ttl_seconds: int = 30 * 24 * 3600
+    cleanup_interval_seconds: int = 30 * 24 * 3600
     output_dir: Path = Path("output")
     temp_dir: Path = Path("tmp")
-    gemini_image_model: str = "gemini-2.0-flash-preview-image-generation"
+    gemini_image_model: str = "gemini-2.0-flash-exp"
     text_model: str = "gpt-4o"
     worker_count: int = 2
 
