@@ -4,14 +4,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from app.models import JobState
-from app.repositories.job_repository import InMemoryJobRepository
+from app.repositories.job_repository import RedisJobRepository
 from app.services.card_generation_service import CardGenerationService
 
 
 class JobService:
     def __init__(
         self,
-        job_repository: InMemoryJobRepository,
+        job_repository: RedisJobRepository,
         card_generation_service: CardGenerationService,
         executor: ThreadPoolExecutor,
         temp_dir: Path,
