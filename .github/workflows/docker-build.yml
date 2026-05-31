@@ -58,8 +58,12 @@ jobs:
 
             docker network create ${{ env.NETWORK_NAME }} || true
 
-            docker stop ${{ env.API_CONTAINER_NAME }} ${{ env.REDIS_CONTAINER_NAME }} || true
-            docker rm ${{ env.API_CONTAINER_NAME }} ${{ env.REDIS_CONTAINER_NAME }} || true
+            docker rm -f ${{ env.API_CONTAINER_NAME }} ${{ env.REDIS_CONTAINER_NAME }} || true
+
+            # Убиваем любой контейнер, удерживающий порт 18000
+            OLD=$(docker ps -q --filter "publish=18000") && [ -n "$OLD" ] && docker rm -f $OLD || true
+
+            sleep 2
 
             docker volume create ${{ env.REDIS_VOLUME_NAME }} || true
             docker run -d \
