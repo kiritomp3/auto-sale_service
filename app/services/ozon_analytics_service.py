@@ -22,20 +22,24 @@ from app.models import (
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # ---------------------------------------------------------------------------
-# Метрики и их источники
+# Определения метрик
 #
-# source="analytics" — /v1/analytics/data (подтверждено работающим)
-# source="orders"    — вычисляется из /v3/posting/fbo+fbs/list (бесплатно)
-# source="finance"   — вычисляется из /v3/finance/transaction/list (бесплатно)
-# source="none"      — нет бесплатного источника (Ozon задепрекейтил)
+# availability="public"  — бесплатно через /v1/analytics/data
+# availability="premium" — требует Ozon Analytics Premium (те же имена, но
+#                          API возвращает 400 "deprecated metrics used" без подписки)
+#
+# Для premium-метрик есть fallback-источники (Orders/Finance API):
+#   fallback="orders"  — вычисляется из /v3/posting/fbo+fbs/list
+#   fallback="finance" — вычисляется из /v3/finance/transaction/list
+#   fallback=None      — бесплатного источника нет
 # ---------------------------------------------------------------------------
 
 METRIC_DEFINITIONS: list[OzonMetricDefinition] = [
     OzonMetricDefinition(id="revenue",             label="Заказано на сумму",                     group="Продажи",    availability="public",  format="currency"),
     OzonMetricDefinition(id="ordered_units",       label="Заказано товаров",                       group="Продажи",    availability="public",  format="integer"),
-    OzonMetricDefinition(id="delivered_units",     label="Доставлено товаров",                     group="Статусы",    availability="public",  format="integer"),
-    OzonMetricDefinition(id="cancellations",       label="Отмены",                                group="Статусы",    availability="public",  format="integer"),
-    OzonMetricDefinition(id="returns",             label="Возвраты",                               group="Статусы",    availability="public",  format="integer"),
+    OzonMetricDefinition(id="delivered_units",     label="Доставлено товаров",                     group="Статусы",    availability="premium", format="integer"),
+    OzonMetricDefinition(id="cancellations",       label="Отмены",                                group="Статусы",    availability="premium", format="integer"),
+    OzonMetricDefinition(id="returns",             label="Возвраты",                               group="Статусы",    availability="premium", format="integer"),
     OzonMetricDefinition(id="hits_view_search",    label="Показы в поиске и категории",            group="Показы",     availability="premium", format="integer"),
     OzonMetricDefinition(id="hits_view_pdp",       label="Показы на карточке товара",              group="Показы",     availability="premium", format="integer"),
     OzonMetricDefinition(id="hits_view",           label="Показы всего",                           group="Показы",     availability="premium", format="integer"),
@@ -51,11 +55,12 @@ METRIC_DEFINITIONS: list[OzonMetricDefinition] = [
     OzonMetricDefinition(id="position_category",   label="Позиция в поиске и категории",           group="Видимость",  availability="premium", format="decimal"),
 ]
 
-# Метрики, подтверждённо работающие через /v1/analytics/data
-_ANALYTICS_API_METRICS = {"revenue", "ordered_units"}
-
-# Метрики, которые Ozon задепрекейтил — нет бесплатного API-источника
-_DEPRECATED_BY_OZON = {
+# Метрики с бесплатным fallback через Orders API
+_ORDERS_FALLBACK = {"delivered_units", "cancellations"}
+# Метрики с бесплатным fallback через Finance API
+_FINANCE_FALLBACK = {"returns"}
+# Метрики без какого-либо бесплатного источника (только Analytics Premium)
+_PREMIUM_ONLY = {
     "hits_view_search", "hits_view_pdp", "hits_view",
     "hits_tocart_search", "hits_tocart_pdp", "hits_tocart",
     "session_view_search", "session_view_pdp", "session_view",
@@ -63,14 +68,11 @@ _DEPRECATED_BY_OZON = {
     "position_category",
 }
 
-# Метрики, вычисляемые из Orders API бесплатно
-_ORDERS_METRICS = {"delivered_units", "cancellations", "ordered_units_orders", "revenue_orders"}
-# Метрики, вычисляемые из Finance API
-_FINANCE_METRICS = {"returns"}
-
 _METRIC_BY_ID = {m.id: m for m in METRIC_DEFINITIONS}
 _ALL_IDS = [m.id for m in METRIC_DEFINITIONS]
 
+# Ozon принимает не более 14 метрик за запрос
+_MAX_METRICS_PER_REQUEST = 14
 _ANALYTICS_PAGE_LIMIT = 1000
 _ORDERS_PAGE_LIMIT = 1000
 _FINANCE_PAGE_LIMIT = 1000
@@ -78,7 +80,7 @@ _MAX_ROWS = 10_000
 
 _VALID_DIMENSIONS = {"sku", "spu", "title", "brand", "category1", "category2", "category3"}
 
-# Статусы заказов для расчёта метрик
+# Статусы заказов
 _DELIVERED_STATUSES = {"delivered"}
 _CANCELLED_STATUSES = {"cancelled", "not_accepted", "arbitration", "client_arbitration"}
 
@@ -90,7 +92,11 @@ _RETURN_TRANSACTION_TYPES = {
     "ClientReturnAgentOperation",
 }
 
-_RATE_LIMIT_PAUSE = 0.35  # секунд между запросами к analytics/data
+_RATE_LIMIT_PAUSE = 0.35
+
+
+def _chunk(lst: list, size: int) -> list[list]:
+    return [lst[i:i + size] for i in range(0, len(lst), size)]
 
 
 def _to_number_or_none(value: Any) -> float | None:
@@ -99,6 +105,17 @@ def _to_number_or_none(value: Any) -> float | None:
         return n if n == n else None
     except (TypeError, ValueError):
         return None
+
+
+def _is_premium_error(exc: httpx.HTTPStatusError) -> bool:
+    """Ozon возвращает 400 'deprecated metrics used' когда метрика требует Premium."""
+    if exc.response.status_code != 400:
+        return False
+    try:
+        msg = exc.response.json().get("message", "")
+        return "deprecated" in msg.lower()
+    except Exception:
+        return False
 
 
 class OzonAnalyticsService:
@@ -131,37 +148,35 @@ class OzonAnalyticsService:
         missing: list[OzonMissingMetric] = []
         warnings: list[str] = []
 
-        # --- Источник 1: /v1/analytics/data ---
-        analytics_ids = [mid for mid in requested_ids if mid in _ANALYTICS_API_METRICS]
-        if analytics_ids:
-            self._fetch_from_analytics_api(
-                date_from, date_to, analytics_ids, dims, filters,
-                rows, totals, available, missing, warnings,
-            )
+        # --- Шаг 1: пробуем ВСЕ метрики через /v1/analytics/data ---
+        # Если есть Premium — получим их все здесь.
+        # Если нет — часть упадёт с ошибкой "deprecated metrics used".
+        analytics_failed: set[str] = set()
+        self._fetch_via_analytics_api(
+            date_from, date_to, requested_ids, dims, filters,
+            rows, totals, available, analytics_failed, warnings,
+        )
 
-        # --- Источник 2: Orders API (FBO + FBS) ---
-        orders_ids = [mid for mid in requested_ids if mid in {"delivered_units", "cancellations"}]
-        if orders_ids:
-            self._fetch_from_orders(
-                date_from, date_to, sku,
-                rows, totals, available, missing, warnings,
-            )
+        # --- Шаг 2: для упавших метрик используем бесплатные источники ---
+        needs_orders = analytics_failed & (_ORDERS_FALLBACK & set(requested_ids))
+        needs_finance = analytics_failed & (_FINANCE_FALLBACK & set(requested_ids))
 
-        # --- Источник 3: Finance API (возвраты) ---
-        if "returns" in requested_ids:
-            self._fetch_returns(
-                date_from, date_to,
-                rows, totals, available, missing, warnings,
-            )
+        if needs_orders:
+            self._fetch_from_orders(date_from, date_to, sku, rows, totals, available, missing, warnings)
 
-        # --- Метрики без бесплатного источника ---
-        for mid in requested_ids:
-            if mid in _DEPRECATED_BY_OZON and mid not in available:
+        if needs_finance:
+            self._fetch_returns(date_from, date_to, rows, totals, available, missing, warnings)
+
+        # --- Шаг 3: метрики без бесплатного fallback — честно говорим почему ---
+        for mid in analytics_failed:
+            if mid in _PREMIUM_ONLY and mid not in available:
                 missing.append(OzonMissingMetric(
                     id=mid,
                     label=_METRIC_BY_ID[mid].label,
-                    error="Ozon задепрекейтил эту метрику в бесплатном API. "
-                          "Доступна только с подпиской на Ozon Analytics Premium.",
+                    error=(
+                        "Требует подписку Ozon Analytics Premium. "
+                        "При наличии подписки метрика автоматически появится в результатах."
+                    ),
                 ))
 
         products = [
@@ -192,10 +207,10 @@ class OzonAnalyticsService:
         )
 
     # ------------------------------------------------------------------
-    # Источник 1 — /v1/analytics/data
+    # Analytics API — пробуем всё, чанки по 14
     # ------------------------------------------------------------------
 
-    def _fetch_from_analytics_api(
+    def _fetch_via_analytics_api(
         self,
         date_from: str,
         date_to: str,
@@ -205,46 +220,77 @@ class OzonAnalyticsService:
         rows: dict,
         totals: dict,
         available: list,
-        missing: list,
+        failed: set,
         warnings: list,
     ) -> None:
-        sort_key = "revenue" if "revenue" in metric_ids else metric_ids[0]
-        sort = [{"key": sort_key, "order": "DESC"}]
+        sort_key = next((m for m in ("revenue", "ordered_units") if m in metric_ids), metric_ids[0])
+
+        for chunk in _chunk(metric_ids, _MAX_METRICS_PER_REQUEST):
+            chunk_sort = [{"key": sort_key, "order": "DESC"}] if sort_key in chunk else [{"key": chunk[0], "order": "DESC"}]
+            try:
+                self._fetch_analytics_chunk(
+                    date_from, date_to, chunk, dims, filters, chunk_sort, rows, totals,
+                )
+                available.extend(m for m in chunk if m not in available)
+            except httpx.HTTPStatusError as exc:
+                if _is_premium_error(exc) and len(chunk) > 1:
+                    # Разбиваем чанк — внутри могут быть и бесплатные, и Premium метрики
+                    for mid in chunk:
+                        time.sleep(_RATE_LIMIT_PAUSE)
+                        try:
+                            self._fetch_analytics_chunk(
+                                date_from, date_to, [mid], dims, filters,
+                                [{"key": mid, "order": "DESC"}], rows, totals,
+                            )
+                            if mid not in available:
+                                available.append(mid)
+                        except httpx.HTTPStatusError as exc2:
+                            if _is_premium_error(exc2):
+                                failed.add(mid)
+                            else:
+                                failed.add(mid)
+                                warnings.append(f"{mid}: Ozon API {exc2.response.status_code}")
+                        except httpx.HTTPError as exc2:
+                            failed.add(mid)
+                            warnings.append(f"{mid}: сеть — {exc2}")
+                else:
+                    for mid in chunk:
+                        failed.add(mid)
+                    if not _is_premium_error(exc):
+                        try:
+                            detail = exc.response.json()
+                        except Exception:
+                            detail = exc.response.text
+                        warnings.append(f"Analytics API {exc.response.status_code}: {detail}")
+            except httpx.HTTPError as exc:
+                for mid in chunk:
+                    failed.add(mid)
+                warnings.append(f"Сеть: {exc}")
+
+    def _fetch_analytics_chunk(
+        self,
+        date_from: str,
+        date_to: str,
+        metric_ids: list[str],
+        dims: list[str],
+        filters: list[dict[str, Any]],
+        sort: list[dict[str, Any]],
+        rows: dict,
+        totals: dict,
+    ) -> None:
         offset = 0
         while offset < _MAX_ROWS:
             time.sleep(_RATE_LIMIT_PAUSE)
-            try:
-                resp = self._client.get_analytics_data(
-                    date_from=date_from,
-                    date_to=date_to,
-                    metrics=metric_ids,
-                    dimension=dims,
-                    filters=filters,
-                    sort=sort,
-                    limit=_ANALYTICS_PAGE_LIMIT,
-                    offset=offset,
-                )
-            except httpx.HTTPStatusError as exc:
-                try:
-                    detail = exc.response.json()
-                except Exception:
-                    detail = exc.response.text
-                for mid in metric_ids:
-                    missing.append(OzonMissingMetric(
-                        id=mid,
-                        label=_METRIC_BY_ID[mid].label,
-                        error=f"Ozon API {exc.response.status_code}: {detail}",
-                    ))
-                return
-            except httpx.HTTPError as exc:
-                for mid in metric_ids:
-                    missing.append(OzonMissingMetric(
-                        id=mid,
-                        label=_METRIC_BY_ID[mid].label,
-                        error=f"Сеть: {exc}",
-                    ))
-                return
-
+            resp = self._client.get_analytics_data(
+                date_from=date_from,
+                date_to=date_to,
+                metrics=metric_ids,
+                dimension=dims,
+                filters=filters,
+                sort=sort,
+                limit=_ANALYTICS_PAGE_LIMIT,
+                offset=offset,
+            )
             result = resp.get("result") or {}
             data_rows = result.get("data") or []
             raw_totals = result.get("totals") or []
@@ -260,16 +306,12 @@ class OzonAnalyticsService:
             for i, mid in enumerate(metric_ids):
                 totals[mid] = _to_number_or_none(raw_totals[i] if i < len(raw_totals) else None)
 
-            if data_rows and mid not in available:
-                available.extend(metric_ids)
-
             if len(data_rows) < _ANALYTICS_PAGE_LIMIT:
                 break
             offset += _ANALYTICS_PAGE_LIMIT
 
     # ------------------------------------------------------------------
-    # Источник 2 — Orders API (FBO + FBS)
-    # Считаем: delivered_units, cancellations
+    # Fallback: Orders API → delivered_units, cancellations
     # ------------------------------------------------------------------
 
     def _fetch_from_orders(
@@ -283,11 +325,9 @@ class OzonAnalyticsService:
         missing: list,
         warnings: list,
     ) -> None:
-        # sku_str → {delivered: int, cancelled: int}
         delivered: dict[str, int] = defaultdict(int)
         cancelled: dict[str, int] = defaultdict(int)
         sku_names: dict[str, str] = {}
-
         since = f"{date_from}T00:00:00Z"
         to = f"{date_to}T23:59:59Z"
 
@@ -298,41 +338,33 @@ class OzonAnalyticsService:
                 time.sleep(_RATE_LIMIT_PAUSE)
                 try:
                     resp = self._client.list_postings(
-                        schema=schema,
-                        since=since,
-                        to=to,
-                        cursor=cursor,
-                        limit=_ORDERS_PAGE_LIMIT,
+                        schema=schema, since=since, to=to,
+                        cursor=cursor, limit=_ORDERS_PAGE_LIMIT,
                     )
-                except (httpx.HTTPStatusError, httpx.HTTPError):
+                except (httpx.HTTPStatusError, httpx.HTTPError) as exc:
+                    warnings.append(f"Orders API ({schema}): {exc}")
                     break
 
-                postings = resp.get("postings") or []
-                for posting in postings:
+                for posting in resp.get("postings") or []:
                     status = posting.get("status", "")
                     for product in posting.get("products") or []:
                         sku = str(product.get("sku") or "")
-                        if not sku:
+                        if not sku or (sku_filter.strip() and sku != sku_filter.strip()):
                             continue
-                        if sku_filter and sku != sku_filter.strip():
-                            continue
-                        name = product.get("name") or ""
                         qty = int(product.get("quantity") or 0)
-                        sku_names[sku] = sku_names.get(sku) or name
+                        sku_names.setdefault(sku, product.get("name") or "")
                         if status in _DELIVERED_STATUSES:
                             delivered[sku] += qty
                         elif status in _CANCELLED_STATUSES:
                             cancelled[sku] += qty
 
-                fetched += len(postings)
+                fetched += len(resp.get("postings") or [])
                 cursor = resp.get("cursor")
                 if not resp.get("has_next") or not cursor:
                     break
 
-        # Записываем в rows
-        all_skus = set(delivered) | set(cancelled)
-        for sku in all_skus:
-            key = self._sku_key(sku, sku_names.get(sku, ""))
+        for sku in set(delivered) | set(cancelled):
+            key = f"{sku}:{sku_names.get(sku, '')}"
             record = rows.setdefault(key, {
                 "dimensions": [{"id": sku, "name": sku_names.get(sku, "")}],
                 "metrics": {},
@@ -342,14 +374,12 @@ class OzonAnalyticsService:
 
         totals["delivered_units"] = float(sum(delivered.values()))
         totals["cancellations"] = float(sum(cancelled.values()))
-
-        if "delivered_units" not in available:
-            available.append("delivered_units")
-        if "cancellations" not in available:
-            available.append("cancellations")
+        for mid in ("delivered_units", "cancellations"):
+            if mid not in available:
+                available.append(mid)
 
     # ------------------------------------------------------------------
-    # Источник 3 — Finance API (возвраты)
+    # Fallback: Finance API → returns
     # ------------------------------------------------------------------
 
     def _fetch_returns(
@@ -364,9 +394,7 @@ class OzonAnalyticsService:
     ) -> None:
         returns: dict[str, int] = defaultdict(int)
         page = 1
-        fetched = 0
-
-        while fetched < _MAX_ROWS:
+        while True:
             time.sleep(_RATE_LIMIT_PAUSE)
             try:
                 resp = self._client.list_finance_transactions(
@@ -377,33 +405,26 @@ class OzonAnalyticsService:
                 )
             except (httpx.HTTPStatusError, httpx.HTTPError) as exc:
                 missing.append(OzonMissingMetric(
-                    id="returns",
-                    label="Возвраты",
+                    id="returns", label="Возвраты",
                     error=f"Finance API недоступен: {exc}",
                 ))
                 return
 
             result = resp.get("result") or {}
-            operations = result.get("operations") or []
-
-            for op in operations:
+            for op in result.get("operations") or []:
                 if op.get("operation_type") not in _RETURN_TRANSACTION_TYPES:
                     continue
                 for item in op.get("items") or []:
                     sku = str(item.get("sku") or "")
-                    if not sku:
-                        continue
-                    qty = abs(int(item.get("quantity") or 1))
-                    returns[sku] += qty
+                    if sku:
+                        returns[sku] += abs(int(item.get("quantity") or 1))
 
-            fetched += len(operations)
-            page_count = result.get("page_count") or 1
-            if page >= page_count:
+            if page >= (result.get("page_count") or 1):
                 break
             page += 1
 
         for sku, qty in returns.items():
-            key = self._sku_key(sku, "")
+            key = f"{sku}:"
             record = rows.setdefault(key, {
                 "dimensions": [{"id": sku, "name": ""}],
                 "metrics": {},
@@ -411,10 +432,5 @@ class OzonAnalyticsService:
             record["metrics"]["returns"] = float(qty)
 
         totals["returns"] = float(sum(returns.values()))
-
         if "returns" not in available:
             available.append("returns")
-
-    @staticmethod
-    def _sku_key(sku: str, name: str) -> str:
-        return f"{sku}:{name}"
