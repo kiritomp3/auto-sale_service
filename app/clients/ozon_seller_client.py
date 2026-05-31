@@ -22,6 +22,28 @@ class OzonSellerClient:
         payload = {"items": items}
         return self._post("/v2/product/import", payload)
 
+    def get_analytics_data(
+        self,
+        date_from: str,
+        date_to: str,
+        metrics: list[str],
+        dimension: list[str],
+        filters: list[dict[str, Any]],
+        sort: list[dict[str, Any]],
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        return self._post("/v1/analytics/data", {
+            "date_from": date_from,
+            "date_to": date_to,
+            "metrics": metrics,
+            "dimension": dimension,
+            "filters": filters,
+            "sort": sort,
+            "limit": limit,
+            "offset": offset,
+        })
+
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
         headers = {

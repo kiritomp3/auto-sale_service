@@ -61,5 +61,6 @@ app.include_router(
         job_service=container.job_service,
         ozon_auth_service=container.ozon_auth_service,
         ozon_base_url=settings.ozon_base_url,
+        metrics_snapshot_repository=container.metrics_snapshot_repository,
     )
 )

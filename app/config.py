@@ -19,6 +19,8 @@ class Settings:
     redis_url: str = "redis://localhost:6379/0"
     redis_ozon_session_prefix: str = "ozon:session"
     redis_job_key_prefix: str = "job"
+    redis_metrics_snapshot_prefix: str = "ozon:metrics_snapshot"
+    metrics_snapshot_ttl_seconds: int = 90 * 24 * 3600
     job_ttl_seconds: int = 30 * 24 * 3600
     cleanup_interval_seconds: int = 30 * 24 * 3600
     output_dir: Path = Path("output")

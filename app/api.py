@@ -7,13 +7,17 @@ from app.clients.ozon_seller_client import OzonSellerClient
 from app.models import (
     CardJobResponse,
     JobState,
+    OzonAnalyticsRequest,
+    OzonAnalyticsResponse,
     OzonAuthLoginRequest,
     OzonAuthLoginResponse,
     OzonAuthLogoutResponse,
     OzonDraftCreateRequest,
     OzonDraftCreateResponse,
 )
+from app.repositories.metrics_snapshot_repository import RedisMetricsSnapshotRepository
 from app.services.job_service import JobService
+from app.services.ozon_analytics_service import OzonAnalyticsService
 from app.services.ozon_auth_service import OzonAuthService
 from app.services.ozon_draft_service import OzonDraftService
 
@@ -22,6 +26,7 @@ def build_router(
     job_service: JobService,
     ozon_auth_service: OzonAuthService,
     ozon_base_url: str,
+    metrics_snapshot_repository: RedisMetricsSnapshotRepository | None = None,
 ) -> APIRouter:
     router = APIRouter()
     security = HTTPBearer(auto_error=False)
@@ -91,5 +96,42 @@ def build_router(
             return OzonDraftCreateResponse(result=result)
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @router.post("/ozon/analytics", response_model=OzonAnalyticsResponse)
+    def get_ozon_analytics(
+        payload: OzonAnalyticsRequest,
+        token: str = Depends(_get_token),
+    ) -> OzonAnalyticsResponse:
+        session = ozon_auth_service.get_session(token)
+        if session is None:
+            raise HTTPException(status_code=401, detail="Сессия не найдена или истекла")
+
+        client = OzonSellerClient(
+            client_id=session.client_id,
+            api_key=session.api_key,
+            base_url=ozon_base_url,
+        )
+        analytics_service = OzonAnalyticsService(client=client)
+
+        try:
+            result = analytics_service.fetch(
+                date_from=payload.date_from,
+                date_to=payload.date_to,
+                dimension=payload.dimension,
+                sku=payload.sku,
+                metric_ids=payload.metrics or None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        if metrics_snapshot_repository is not None:
+            try:
+                metrics_snapshot_repository.save(session.client_id, result)
+            except Exception:
+                pass  # снапшот — некритичная операция
+
+        return result
 
     return router
