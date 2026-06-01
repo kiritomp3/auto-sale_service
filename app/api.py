@@ -7,19 +7,27 @@ from app.clients.ozon_seller_client import OzonSellerClient
 from app.models import (
     CardJobResponse,
     JobState,
+    OzonAIChatRequest,
+    OzonAIChatResponse,
     OzonAnalyticsRequest,
     OzonAnalyticsResponse,
     OzonAuthLoginRequest,
     OzonAuthLoginResponse,
     OzonAuthLogoutResponse,
+    OzonCompareRequest,
     OzonDraftCreateRequest,
     OzonDraftCreateResponse,
+    OzonHistoryResponse,
+    OzonHistoryEntry,
+    OzonInsightsResponse,
 )
 from app.repositories.metrics_snapshot_repository import RedisMetricsSnapshotRepository
 from app.services.job_service import JobService
 from app.services.ozon_analytics_service import OzonAnalyticsService
 from app.services.ozon_auth_service import OzonAuthService
 from app.services.ozon_draft_service import OzonDraftService
+from app.services.ozon_ai_chat_service import OzonAIChatService
+from app.services.ozon_insights_service import OzonInsightsService
 
 
 def build_router(
@@ -27,6 +35,8 @@ def build_router(
     ozon_auth_service: OzonAuthService,
     ozon_base_url: str,
     metrics_snapshot_repository: RedisMetricsSnapshotRepository | None = None,
+    ozon_insights_service: OzonInsightsService | None = None,
+    ozon_ai_chat_service: OzonAIChatService | None = None,
 ) -> APIRouter:
     router = APIRouter()
     security = HTTPBearer(auto_error=False)
@@ -133,5 +143,127 @@ def build_router(
                 pass  # снапшот — некритичная операция
 
         return result
+
+    # ------------------------------------------------------------------
+    # Insights / analytics comparison
+    # ------------------------------------------------------------------
+
+    def _require_insights_service() -> OzonInsightsService:
+        if ozon_insights_service is None:
+            raise HTTPException(status_code=503, detail="Сервис инсайтов недоступен")
+        return ozon_insights_service
+
+    @router.get("/ozon/analytics/history", response_model=OzonHistoryResponse)
+    def get_analytics_history(
+        limit: int = 50,
+        token: str = Depends(_get_token),
+    ) -> OzonHistoryResponse:
+        session = ozon_auth_service.get_session(token)
+        if session is None:
+            raise HTTPException(status_code=401, detail="Сессия не найдена или истекла")
+        svc = _require_insights_service()
+        raw = svc.get_history(session.client_id, limit=min(limit, 200))
+        entries = [
+            OzonHistoryEntry(
+                date_from=e.get("date_from", ""),
+                date_to=e.get("date_to", ""),
+                fetched_at=e.get("fetched_at", ""),
+                snapshot_key=e.get("snapshot_key", ""),
+            )
+            for e in raw
+        ]
+        return OzonHistoryResponse(
+            client_id=session.client_id,
+            snapshots=entries,
+            total=len(entries),
+        )
+
+    @router.get("/ozon/analytics/insights", response_model=OzonInsightsResponse)
+    def get_analytics_insights(
+        token: str = Depends(_get_token),
+    ) -> OzonInsightsResponse:
+        """Авто-анализ: берёт последний снапшот из Redis и сравнивает с предыдущим периодом."""
+        session = ozon_auth_service.get_session(token)
+        if session is None:
+            raise HTTPException(status_code=401, detail="Сессия не найдена или истекла")
+        svc = _require_insights_service()
+        try:
+            return svc.get_insights(session.client_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/ozon/analytics/compare", response_model=OzonInsightsResponse)
+    def compare_analytics(
+        payload: OzonCompareRequest,
+        token: str = Depends(_get_token),
+    ) -> OzonInsightsResponse:
+        """
+        Сравнивает два периода. Если данные не в кэше — автоматически запрашивает у Ozon API.
+        Предыдущий период вычисляется автоматически (той же длины), если не указан явно.
+        """
+        session = ozon_auth_service.get_session(token)
+        if session is None:
+            raise HTTPException(status_code=401, detail="Сессия не найдена или истекла")
+
+        svc = _require_insights_service()
+        client = OzonSellerClient(
+            client_id=session.client_id,
+            api_key=session.api_key,
+            base_url=ozon_base_url,
+        )
+        analytics_service = OzonAnalyticsService(client=client)
+
+        try:
+            return svc.compare(
+                client_id=session.client_id,
+                current_date_from=payload.current_date_from,
+                current_date_to=payload.current_date_to,
+                previous_date_from=payload.previous_date_from,
+                previous_date_to=payload.previous_date_to,
+                sku=payload.sku,
+                analytics_service=analytics_service,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @router.post("/ozon/analytics/chat", response_model=OzonAIChatResponse)
+    def analytics_chat(
+        payload: OzonAIChatRequest,
+        token: str = Depends(_get_token),
+    ) -> OzonAIChatResponse:
+        """
+        AI-чат по метрикам. GPT-4o-mini читает данные за период и отвечает на вопрос.
+        Если question пустой — даёт общий анализ с конкретными рекомендациями.
+        Автоматически подтягивает данные из Ozon API если нет кэша.
+        """
+        if ozon_ai_chat_service is None:
+            raise HTTPException(status_code=503, detail="AI чат недоступен: не настроен OPENAI_API_KEY")
+
+        session = ozon_auth_service.get_session(token)
+        if session is None:
+            raise HTTPException(status_code=401, detail="Сессия не найдена или истекла")
+
+        client = OzonSellerClient(
+            client_id=session.client_id,
+            api_key=session.api_key,
+            base_url=ozon_base_url,
+        )
+        analytics_service = OzonAnalyticsService(client=client)
+
+        try:
+            return ozon_ai_chat_service.chat(
+                client_id=session.client_id,
+                current_date_from=payload.current_date_from,
+                current_date_to=payload.current_date_to,
+                question=payload.question,
+                sku=payload.sku,
+                analytics_service=analytics_service,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return router

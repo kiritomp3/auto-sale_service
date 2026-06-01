@@ -86,3 +86,26 @@ class RedisMetricsSnapshotRepository:
             except json.JSONDecodeError:
                 continue
         return result
+
+    def get_latest(self, client_id: str) -> MetricsSnapshot | None:
+        history = self.get_history(client_id, limit=1)
+        if not history:
+            return None
+        entry = history[0]
+        return self.get(client_id, entry["date_from"], entry["date_to"])
+
+    def get_by_snapshot_key(self, snapshot_key: str) -> MetricsSnapshot | None:
+        raw = self._redis.get(snapshot_key)
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        payload = json.loads(raw)
+        source = payload.get("source", {})
+        return MetricsSnapshot(
+            client_id=snapshot_key,
+            date_from=source.get("date_from", ""),
+            date_to=source.get("date_to", ""),
+            fetched_at=datetime.fromisoformat(payload["fetched_at"]),
+            payload=payload,
+        )

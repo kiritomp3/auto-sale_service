@@ -8,7 +8,7 @@ from google.genai import types
 
 
 class GeminiImageClient:
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-preview-image-generation"):
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash-image"):
         self._client = genai.Client(api_key=api_key)
         self._model = model
 

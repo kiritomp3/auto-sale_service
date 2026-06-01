@@ -13,6 +13,8 @@ from app.repositories.ozon_auth_repository import RedisOzonAuthRepository
 from app.services.card_generation_service import CardGenerationService
 from app.services.job_service import JobService
 from app.services.ozon_auth_service import OzonAuthService
+from app.services.ozon_ai_chat_service import OzonAIChatService
+from app.services.ozon_insights_service import OzonInsightsService
 
 
 class Container:
@@ -60,4 +62,11 @@ class Container:
             redis_client=self.redis_client,
             key_prefix=settings.redis_metrics_snapshot_prefix,
             ttl_seconds=settings.metrics_snapshot_ttl_seconds,
+        )
+        self.ozon_insights_service = OzonInsightsService(
+            snapshot_repository=self.metrics_snapshot_repository,
+        )
+        self.ozon_ai_chat_service = OzonAIChatService(
+            openai_api_key=settings.openai_api_key,
+            insights_service=self.ozon_insights_service,
         )

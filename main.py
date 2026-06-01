@@ -62,5 +62,7 @@ app.include_router(
         ozon_auth_service=container.ozon_auth_service,
         ozon_base_url=settings.ozon_base_url,
         metrics_snapshot_repository=container.metrics_snapshot_repository,
+        ozon_insights_service=container.ozon_insights_service,
+        ozon_ai_chat_service=container.ozon_ai_chat_service,
     )
 )

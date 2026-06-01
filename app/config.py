@@ -25,7 +25,7 @@ class Settings:
     cleanup_interval_seconds: int = 30 * 24 * 3600
     output_dir: Path = Path("output")
     temp_dir: Path = Path("tmp")
-    gemini_image_model: str = "gemini-2.0-flash-exp"
+    gemini_image_model: str = "gemini-2.5-flash-image"
     text_model: str = "gpt-4o"
     worker_count: int = 2
 
