@@ -9,6 +9,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+DEFAULT_IMAGE_SIZE = "1024x1536"
+SUPPORTED_IMAGE_SIZES = frozenset({"1024x1024", "1024x1536", "1536x1024", "auto"})
+
+
+def normalize_image_size(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in SUPPORTED_IMAGE_SIZES else DEFAULT_IMAGE_SIZE
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -25,6 +33,8 @@ class Settings:
     cleanup_interval_seconds: int = 30 * 24 * 3600
     output_dir: Path = Path("output")
     temp_dir: Path = Path("tmp")
+    image_model: str = "gpt-image-1"
+    image_size: str = DEFAULT_IMAGE_SIZE
     text_model: str = "gpt-4o"
     worker_count: int = 2
 
@@ -53,4 +63,5 @@ class Settings:
             ozon_session_ttl_seconds=ttl_value,
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             redis_ozon_session_prefix=os.getenv("REDIS_OZON_SESSION_PREFIX", "ozon:session"),
+            image_size=normalize_image_size(os.getenv("GENERATION_IMAGE_SIZE") or os.getenv("IMAGE_SIZE")),
         )

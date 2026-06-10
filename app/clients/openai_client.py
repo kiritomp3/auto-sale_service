@@ -22,9 +22,15 @@ class OpenAIClient:
 
     @staticmethod
     def _encode_image_to_data_url(path: Path) -> str:
-        ext = path.suffix.lower().replace(".", "") or "jpeg"
+        mime_type = {
+            ".gif": "image/gif",
+            ".jpeg": "image/jpeg",
+            ".jpg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+        }.get(path.suffix.lower(), "image/jpeg")
         b64 = base64.b64encode(path.read_bytes()).decode("utf-8")
-        return f"data:image/{ext};base64,{b64}"
+        return f"data:{mime_type};base64,{b64}"
 
     def analyze_product(self, image_path: Path, prompt: str) -> dict[str, Any]:
         image_data_url = self._encode_image_to_data_url(image_path)
