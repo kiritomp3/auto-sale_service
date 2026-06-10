@@ -23,7 +23,7 @@ class KieAIImageClient:
     Поток: upload image → createTask → poll recordInfo → download result.
     """
 
-    _UPLOAD_URL = "https://api.kie.ai/api/file-stream-upload"
+    _UPLOAD_URL = "https://kieai.redpandaai.co/api/file-stream-upload"
     _CREATE_URL = "https://api.kie.ai/api/v1/jobs/createTask"
     _STATUS_URL = "https://api.kie.ai/api/v1/jobs/recordInfo"
     _MODEL = "gpt-image-2-image-to-image"
