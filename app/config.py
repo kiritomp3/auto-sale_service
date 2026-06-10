@@ -13,7 +13,7 @@ load_dotenv()
 @dataclass(frozen=True)
 class Settings:
     openai_api_key: str
-    gemini_api_key: str
+    kie_ai_api_key: str
     ozon_base_url: str = "https://api-seller.ozon.ru"
     ozon_session_ttl_seconds: int = 60 * 60 * 12
     redis_url: str = "redis://localhost:6379/0"
@@ -25,7 +25,6 @@ class Settings:
     cleanup_interval_seconds: int = 30 * 24 * 3600
     output_dir: Path = Path("output")
     temp_dir: Path = Path("tmp")
-    gemini_image_model: str = "gemini-2.5-flash-image"
     text_model: str = "gpt-4o"
     worker_count: int = 2
 
@@ -35,9 +34,9 @@ class Settings:
         if not openai_key:
             raise RuntimeError("OPENAI_API_KEY не найден в переменных окружения")
 
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        if not gemini_key:
-            raise RuntimeError("GEMINI_API_KEY не найден в переменных окружения")
+        kie_ai_key = os.getenv("KIE_AI_API_KEY")
+        if not kie_ai_key:
+            raise RuntimeError("KIE_AI_API_KEY не найден в переменных окружения")
 
         ttl_raw = os.getenv("OZON_SESSION_TTL_SECONDS", str(60 * 60 * 12))
         try:
@@ -49,7 +48,7 @@ class Settings:
 
         return cls(
             openai_api_key=openai_key,
-            gemini_api_key=gemini_key,
+            kie_ai_api_key=kie_ai_key,
             ozon_base_url=os.getenv("OZON_BASE_URL", "https://api-seller.ozon.ru"),
             ozon_session_ttl_seconds=ttl_value,
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),

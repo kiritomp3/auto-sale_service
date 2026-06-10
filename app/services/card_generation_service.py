@@ -5,13 +5,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from app.clients.gemini_client import GeminiImageClient
+from app.clients.kie_ai_client import KieAIImageClient
 from app.clients.openai_client import OpenAIClient
 from app.prompts import DEFAULT_STYLE, PRODUCT_LOCK_RULES
 
 
 class CardGenerationService:
-    def __init__(self, text_client: OpenAIClient, image_client: GeminiImageClient, output_dir: Path):
+    def __init__(self, text_client: OpenAIClient, image_client: KieAIImageClient, output_dir: Path):
         self._text_client = text_client
         self._image_client = image_client
         self._output_dir = output_dir
