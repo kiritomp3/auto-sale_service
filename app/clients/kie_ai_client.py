@@ -8,6 +8,14 @@ from pathlib import Path
 import httpx
 
 
+_SIZE_TO_ASPECT: dict[str, str] = {
+    "1024x1024": "1:1",
+    "1024x1536": "2:3",
+    "1536x1024": "3:2",
+    "auto": "auto",
+}
+
+
 class KieAIImageClient:
     """
     Image-to-image через kie.ai GPT Image 2.
@@ -41,11 +49,11 @@ class KieAIImageClient:
             raise RuntimeError(f"kie.ai upload failed: {body.get('msg')}")
         return body["data"]["downloadUrl"]
 
-    def _create_task(self, prompt: str, image_url: str) -> str:
+    def _create_task(self, prompt: str, image_url: str, aspect_ratio: str = "1:1") -> str:
         payload = {
             "model": self._MODEL,
             "input": {"prompt": prompt, "input_urls": [image_url]},
-            "aspect_ratio": "1:1",
+            "aspect_ratio": aspect_ratio,
             "resolution": "1K",
         }
         with httpx.Client(timeout=30) as client:
@@ -80,9 +88,10 @@ class KieAIImageClient:
                 time.sleep(self._poll_interval)
         raise TimeoutError(f"kie.ai task {task_id} не завершился за {self._timeout}с")
 
-    def generate_card_image_b64(self, prompt: str, image_path: Path) -> str:
+    def generate_card_image_b64(self, prompt: str, image_path: Path, image_size: str | None = None) -> str:
+        aspect_ratio = _SIZE_TO_ASPECT.get(image_size or "", "1:1")
         image_url = self._upload(image_path)
-        task_id = self._create_task(prompt, image_url)
+        task_id = self._create_task(prompt, image_url, aspect_ratio)
         result_url = self._poll(task_id)
         with httpx.Client(timeout=60) as client:
             resp = client.get(result_url)
