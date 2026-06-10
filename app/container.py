@@ -37,6 +37,7 @@ class Container:
             text_client=self.openai_client,
             image_client=self.kie_ai_image_client,
             output_dir=settings.output_dir,
+            image_size=settings.image_size,
         )
         self.executor = ThreadPoolExecutor(max_workers=settings.worker_count)
         self.job_service = JobService(
