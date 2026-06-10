@@ -1,6 +1,6 @@
 services:
   wb-cards-api:
-    build: .
+    image: ghcr.io/kiritomp3/auto-sale_service:latest
     container_name: wb-cards-api
     restart: unless-stopped
     depends_on:

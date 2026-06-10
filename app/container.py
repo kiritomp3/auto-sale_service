@@ -4,33 +4,38 @@ from concurrent.futures import ThreadPoolExecutor
 
 import redis
 
-from app.clients.gemini_client import GeminiImageClient
+from app.clients.kie_ai_client import KieAIImageClient
 from app.clients.openai_client import OpenAIClient
 from app.config import Settings
-from app.repositories.job_repository import InMemoryJobRepository
+from app.repositories.job_repository import RedisJobRepository
+from app.repositories.metrics_snapshot_repository import RedisMetricsSnapshotRepository
 from app.repositories.ozon_auth_repository import RedisOzonAuthRepository
 from app.services.card_generation_service import CardGenerationService
 from app.services.job_service import JobService
 from app.services.ozon_auth_service import OzonAuthService
+from app.services.ozon_ai_chat_service import OzonAIChatService
+from app.services.ozon_insights_service import OzonInsightsService
 
 
 class Container:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-        self.job_repository = InMemoryJobRepository()
+        self.redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=False)
+        self.job_repository = RedisJobRepository(
+            redis_client=self.redis_client,
+            key_prefix=settings.redis_job_key_prefix,
+            ttl_seconds=settings.job_ttl_seconds,
+        )
         self.openai_client = OpenAIClient(
             api_key=settings.openai_api_key,
             text_model=settings.text_model,
-            image_model="",  # не используется — изображения через Gemini
+            image_model="",
         )
-        self.gemini_image_client = GeminiImageClient(
-            api_key=settings.gemini_api_key,
-            model=settings.gemini_image_model,
-        )
+        self.kie_ai_image_client = KieAIImageClient(api_key=settings.kie_ai_api_key)
         self.card_generation_service = CardGenerationService(
             text_client=self.openai_client,
-            image_client=self.gemini_image_client,
+            image_client=self.kie_ai_image_client,
             output_dir=settings.output_dir,
         )
         self.executor = ThreadPoolExecutor(max_workers=settings.worker_count)
@@ -42,7 +47,6 @@ class Container:
             output_dir=settings.output_dir,
         )
 
-        self.redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=False)
         self.ozon_auth_repository = RedisOzonAuthRepository(
             redis_client=self.redis_client,
             key_prefix=settings.redis_ozon_session_prefix,
@@ -50,4 +54,16 @@ class Container:
         self.ozon_auth_service = OzonAuthService(
             repository=self.ozon_auth_repository,
             session_ttl_seconds=settings.ozon_session_ttl_seconds,
+        )
+        self.metrics_snapshot_repository = RedisMetricsSnapshotRepository(
+            redis_client=self.redis_client,
+            key_prefix=settings.redis_metrics_snapshot_prefix,
+            ttl_seconds=settings.metrics_snapshot_ttl_seconds,
+        )
+        self.ozon_insights_service = OzonInsightsService(
+            snapshot_repository=self.metrics_snapshot_repository,
+        )
+        self.ozon_ai_chat_service = OzonAIChatService(
+            openai_api_key=settings.openai_api_key,
+            insights_service=self.ozon_insights_service,
         )
