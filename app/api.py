@@ -59,7 +59,10 @@ def build_router(
         if not image.filename:
             raise HTTPException(status_code=400, detail="Файл изображения обязателен")
         payload = await image.read()
-        job = job_service.enqueue(payload, image.filename, refinement_prompt, size)
+        try:
+            job = job_service.enqueue(payload, image.filename, refinement_prompt, size)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return CardJobResponse(job_id=job.job_id, status=job.status)
 
     @router.get("/crads/{job_id}", response_model=JobState)
