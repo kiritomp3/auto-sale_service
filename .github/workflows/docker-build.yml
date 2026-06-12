@@ -62,5 +62,5 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             cd /root/auto-sale_service
-            docker compose pull
-            docker compose up -d
+            git pull --ff-only origin main
+            docker compose up -d --build
