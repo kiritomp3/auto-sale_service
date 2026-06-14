@@ -8,3 +8,37 @@ PRODUCT_LOCK_RULES = """
 """.strip()
 
 DEFAULT_STYLE = "Современный рекламный стиль: чистый светлый фон, акцентная типографика, премиальная подача товара."
+
+# Требования конкретных маркетплейсов к карточкам и листингу.
+MARKETPLACE_SPECS: dict[str, dict[str, str]] = {
+    "wb": {
+        "label": "Wildberries",
+        "card": "Вертикальный формат 3:4, яркая «продающая» инфографика, плашки преимуществ, крупный оффер-бейдж.",
+        "listing": "Заголовок до 60 символов, продающее описание, акцент на SEO-ключи для поиска WB.",
+    },
+    "ozon": {
+        "label": "Ozon",
+        "card": "Вертикальный формат 3:4, чистая инфографика, спокойная типографика, акцент на характеристиках товара.",
+        "listing": "Заголовок до 200 символов по схеме «Тип + Бренд + Модель + ключевые признаки», структурированные характеристики.",
+    },
+    "avito": {
+        "label": "Avito",
+        "card": "Формат, близкий к реальному фото объявления: товар крупно, минимум маркетинговой графики, ощущение «живого» фото.",
+        "listing": "Заголовок до 50 символов без рекламных штампов, честное описание состояния и характеристик, разговорный тон частного объявления.",
+    },
+}
+
+
+def marketplace_label(marketplace: str) -> str:
+    spec = MARKETPLACE_SPECS.get(marketplace)
+    return spec["label"] if spec else marketplace.upper()
+
+
+def marketplace_card_guidance(marketplace: str) -> str:
+    spec = MARKETPLACE_SPECS.get(marketplace, MARKETPLACE_SPECS["wb"])
+    return f"МАРКЕТПЛЕЙС {spec['label']}: {spec['card']}"
+
+
+def marketplace_listing_guidance(marketplace: str) -> str:
+    spec = MARKETPLACE_SPECS.get(marketplace, MARKETPLACE_SPECS["wb"])
+    return f"Требования {spec['label']}: {spec['listing']}"

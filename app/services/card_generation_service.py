@@ -7,8 +7,14 @@ from typing import Any
 
 from app.clients.kie_ai_client import KieAIImageClient
 from app.clients.openai_client import OpenAIClient
-from app.config import DEFAULT_IMAGE_SIZE, normalize_image_size
-from app.prompts import DEFAULT_STYLE, PRODUCT_LOCK_RULES
+from app.config import DEFAULT_IMAGE_SIZE, DEFAULT_MARKETPLACE, normalize_image_size, normalize_marketplace
+from app.prompts import (
+    DEFAULT_STYLE,
+    PRODUCT_LOCK_RULES,
+    marketplace_card_guidance,
+    marketplace_label,
+    marketplace_listing_guidance,
+)
 
 
 class CardGenerationService:
@@ -49,9 +55,10 @@ class CardGenerationService:
 """.strip()
 
     @staticmethod
-    def _build_listing_prompt(analysis: dict[str, Any], refinement_prompt: str) -> str:
+    def _build_listing_prompt(analysis: dict[str, Any], refinement_prompt: str, marketplace: str) -> str:
         return f"""
-Сгенерируй контент карточки товара для WB/Ozon на русском языке.
+Сгенерируй контент карточки товара для маркетплейса {marketplace_label(marketplace)} на русском языке.
+{marketplace_listing_guidance(marketplace)}
 Верни строго JSON без markdown:
 {{
   "title": str,
@@ -70,7 +77,7 @@ class CardGenerationService:
 """.strip()
 
     @staticmethod
-    def _build_card_prompt(analysis: dict[str, Any], card_index: int, refinement_prompt: str) -> str:
+    def _build_card_prompt(analysis: dict[str, Any], card_index: int, refinement_prompt: str, marketplace: str) -> str:
         product_name = analysis.get("product_name") or analysis.get("product_type") or "товар"
         short_title = analysis.get("short_title") or f"{product_name} для ежедневного использования"
         selling_points = list(analysis.get("selling_points", []))
@@ -109,6 +116,7 @@ class CardGenerationService:
         return f"""
 Используй товар с прикреплённого фото как визуальный референс для создания рекламной карточки маркетплейса.
 
+{marketplace_card_guidance(marketplace)}
 СТИЛЬ: {style}
 
 СЦЕНАРИЙ {selected['name']}: {selected['layout']}
@@ -129,8 +137,9 @@ class CardGenerationService:
         job_id: str,
         index: int,
         image_size: str,
+        marketplace: str,
     ) -> tuple[int, str]:
-        prompt = self._build_card_prompt(analysis, index, refinement_prompt)
+        prompt = self._build_card_prompt(analysis, index, refinement_prompt, marketplace)
         generated_b64 = self._image_client.generate_card_image_b64(prompt, image_path, image_size)
         output_path = self._output_dir / f"{job_id}_card_{index + 1}.png"
         output_path.write_bytes(__import__("base64").b64decode(generated_b64))
@@ -143,6 +152,7 @@ class CardGenerationService:
         refinement_prompt: str,
         job_id: str,
         image_size: str,
+        marketplace: str,
         n_cards: int = 3,
     ) -> list[str]:
         result_paths: dict[int, str] = {}
@@ -156,6 +166,7 @@ class CardGenerationService:
                     job_id,
                     i,
                     image_size,
+                    marketplace,
                 ): i
                 for i in range(n_cards)
             }
@@ -170,12 +181,16 @@ class CardGenerationService:
         refinement_prompt: str,
         job_id: str,
         image_size: str | None = None,
+        marketplace: str | None = None,
     ) -> dict[str, Any]:
         normalized_image_size = normalize_image_size(image_size or self._image_size)
+        normalized_marketplace = normalize_marketplace(marketplace or DEFAULT_MARKETPLACE)
         analysis_prompt = self._build_analyze_prompt(refinement_prompt)
         analysis = self._text_client.analyze_product(image_path=image_path, prompt=analysis_prompt)
-        cards = self._generate_cards(analysis, image_path, refinement_prompt, job_id, normalized_image_size)
-        listing_prompt = self._build_listing_prompt(analysis, refinement_prompt)
+        cards = self._generate_cards(
+            analysis, image_path, refinement_prompt, job_id, normalized_image_size, normalized_marketplace
+        )
+        listing_prompt = self._build_listing_prompt(analysis, refinement_prompt, normalized_marketplace)
         listing_content = self._text_client.generate_listing(listing_prompt)
 
         return {
@@ -185,6 +200,7 @@ class CardGenerationService:
                 "image_path": str(image_path),
                 "refinement_prompt": refinement_prompt,
                 "image_size": normalized_image_size,
+                "marketplace": normalized_marketplace,
             },
             "analysis": analysis,
             "cards": cards,

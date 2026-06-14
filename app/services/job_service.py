@@ -76,6 +76,33 @@ def _convert_heif_to_jpeg(image_bytes: bytes) -> bytes:
         raise RuntimeError(READ_IMAGE_ERROR) from exc
 
 
+def prepare_image_file(image_bytes: bytes, image_filename: str, dest_dir: Path, name: str) -> Path:
+    """Валидирует/нормализует загруженное изображение и сохраняет в dest_dir/<name><ext>.
+
+    HEIC/HEIF конвертируются в JPEG. Поднимает RuntimeError для неподдерживаемых форматов.
+    """
+    extension = Path(image_filename).suffix.lower()
+    detected_extension = _detect_supported_extension(image_bytes)
+
+    if not detected_extension:
+        raise RuntimeError(SUPPORTED_IMAGE_ERROR)
+
+    if extension not in SUPPORTED_IMAGE_EXTENSIONS and extension not in HEIF_IMAGE_EXTENSIONS:
+        extension = detected_extension
+
+    if extension in HEIF_IMAGE_EXTENSIONS or detected_extension in HEIF_IMAGE_EXTENSIONS:
+        image_bytes = _convert_heif_to_jpeg(image_bytes)
+        extension = ".jpg"
+    else:
+        _verify_image_readable(image_bytes)
+        extension = detected_extension if detected_extension in SUPPORTED_IMAGE_EXTENSIONS else extension
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    image_path = dest_dir / f"{name}{extension}"
+    image_path.write_bytes(image_bytes)
+    return image_path
+
+
 class JobService:
     def __init__(
         self,
@@ -93,10 +120,19 @@ class JobService:
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
-    def _run_job(self, job_id: str, image_path: Path, refinement_prompt: str, image_size: str | None) -> None:
+    def _run_job(
+        self,
+        job_id: str,
+        image_path: Path,
+        refinement_prompt: str,
+        image_size: str | None,
+        marketplace: str | None,
+    ) -> None:
         self._job_repository.save(JobState(job_id=job_id, status="processing"))
         try:
-            result = self._card_generation_service.build_result(image_path, refinement_prompt, job_id, image_size)
+            result = self._card_generation_service.build_result(
+                image_path, refinement_prompt, job_id, image_size, marketplace
+            )
             result_path = self._output_dir / f"{job_id}_result.json"
             result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             self._job_repository.save(JobState(**result))
@@ -109,36 +145,19 @@ class JobService:
         image_filename: str,
         refinement_prompt: str,
         image_size: str | None = None,
+        marketplace: str | None = None,
     ) -> JobState:
         job_id = uuid.uuid4().hex
         image_path = self._prepare_input_image(image_bytes, image_filename, job_id)
 
         queued_job = JobState(job_id=job_id, status="queued")
         self._job_repository.save(queued_job)
-        self._executor.submit(self._run_job, job_id, image_path, refinement_prompt, image_size)
+        self._executor.submit(self._run_job, job_id, image_path, refinement_prompt, image_size, marketplace)
         return queued_job
 
     def get(self, job_id: str) -> JobState | None:
         return self._job_repository.get(job_id)
 
     def _prepare_input_image(self, image_bytes: bytes, image_filename: str, job_id: str) -> Path:
-        extension = Path(image_filename).suffix.lower()
-        detected_extension = _detect_supported_extension(image_bytes)
-
-        if not detected_extension:
-            raise RuntimeError(SUPPORTED_IMAGE_ERROR)
-
-        if extension not in SUPPORTED_IMAGE_EXTENSIONS and extension not in HEIF_IMAGE_EXTENSIONS:
-            extension = detected_extension
-
-        if extension in HEIF_IMAGE_EXTENSIONS or detected_extension in HEIF_IMAGE_EXTENSIONS:
-            image_bytes = _convert_heif_to_jpeg(image_bytes)
-            extension = ".jpg"
-        else:
-            _verify_image_readable(image_bytes)
-            extension = detected_extension if detected_extension in SUPPORTED_IMAGE_EXTENSIONS else extension
-
-        image_path = self._temp_dir / f"{job_id}{extension}"
-        image_path.write_bytes(image_bytes)
-        return image_path
+        return prepare_image_file(image_bytes, image_filename, self._temp_dir, job_id)
 

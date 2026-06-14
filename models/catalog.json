@@ -1,0 +1,16 @@
+[
+  {
+    "id": "female_front_standing",
+    "name": "Девушка, фронтально, стоя",
+    "gender": "female",
+    "pose": "стоя, руки вдоль тела, фронтальный ракурс",
+    "file": "female_front_standing.jpg"
+  },
+  {
+    "id": "male_front_standing",
+    "name": "Мужчина, фронтально, стоя",
+    "gender": "male",
+    "pose": "стоя, руки вдоль тела, фронтальный ракурс",
+    "file": "male_front_standing.jpg"
+  }
+]

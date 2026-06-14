@@ -49,10 +49,10 @@ class KieAIImageClient:
             raise RuntimeError(f"kie.ai upload failed: {body.get('msg')}")
         return body["data"]["downloadUrl"]
 
-    def _create_task(self, prompt: str, image_url: str, aspect_ratio: str = "1:1") -> str:
+    def _create_task(self, prompt: str, image_urls: list[str], aspect_ratio: str = "1:1") -> str:
         payload = {
             "model": self._MODEL,
-            "input": {"prompt": prompt, "input_urls": [image_url]},
+            "input": {"prompt": prompt, "input_urls": image_urls},
             "aspect_ratio": aspect_ratio,
             "resolution": "1K",
         }
@@ -91,8 +91,30 @@ class KieAIImageClient:
     def generate_card_image_b64(self, prompt: str, image_path: Path, image_size: str | None = None) -> str:
         aspect_ratio = _SIZE_TO_ASPECT.get(image_size or "", "1:1")
         image_url = self._upload(image_path)
-        task_id = self._create_task(prompt, image_url, aspect_ratio)
+        task_id = self._create_task(prompt, [image_url], aspect_ratio)
         result_url = self._poll(task_id)
+        return self._download_b64(result_url)
+
+    def generate_from_images_b64(
+        self,
+        prompt: str,
+        image_paths: list[Path],
+        image_size: str | None = None,
+    ) -> str:
+        """Image-to-image с несколькими входными изображениями.
+
+        Используется для try-on: [фото модели, фото одежды] → одетая модель.
+        Порядок image_paths важен и интерпретируется промптом.
+        """
+        if not image_paths:
+            raise ValueError("Нужно хотя бы одно изображение")
+        aspect_ratio = _SIZE_TO_ASPECT.get(image_size or "", "2:3")
+        image_urls = [self._upload(path) for path in image_paths]
+        task_id = self._create_task(prompt, image_urls, aspect_ratio)
+        result_url = self._poll(task_id)
+        return self._download_b64(result_url)
+
+    def _download_b64(self, result_url: str) -> str:
         with httpx.Client(timeout=60) as client:
             resp = client.get(result_url)
         resp.raise_for_status()

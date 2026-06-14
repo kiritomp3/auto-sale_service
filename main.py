@@ -55,12 +55,17 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+settings.models_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/output", StaticFiles(directory=settings.output_dir), name="output")
+app.mount("/models", StaticFiles(directory=settings.models_dir), name="models")
 app.include_router(
     build_router(
         job_service=container.job_service,
         ozon_auth_service=container.ozon_auth_service,
         ozon_base_url=settings.ozon_base_url,
+        avito_auth_service=container.avito_auth_service,
+        avito_base_url=settings.avito_base_url,
+        tryon_service=container.tryon_service,
         metrics_snapshot_repository=container.metrics_snapshot_repository,
         ozon_insights_service=container.ozon_insights_service,
         ozon_ai_chat_service=container.ozon_ai_chat_service,
