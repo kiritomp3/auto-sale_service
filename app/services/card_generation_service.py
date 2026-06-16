@@ -109,6 +109,27 @@ class CardGenerationService:
                 "points": [selling_points[0], selling_points[3], selling_points[5]],
                 "offer": offer,
             },
+            {
+                "name": "Card 4 COMPARE",
+                "layout": "Товар 40-50% площади сбоку, рядом аккуратная таблица-сравнение характеристик с галочками-преимуществами.",
+                "title": f"Характеристики {product_name}",
+                "points": [selling_points[1], selling_points[2], selling_points[4], selling_points[5]],
+                "offer": "Сравните сами",
+            },
+            {
+                "name": "Card 5 LIFESTYLE",
+                "layout": "Товар в реалистичном сценарии применения (lifestyle-сцена), 70% площади — окружение использования, минимум плашек.",
+                "title": f"{product_name} в деле",
+                "points": [selling_points[0], selling_points[4]],
+                "offer": "Удобно каждый день",
+            },
+            {
+                "name": "Card 6 SOCIAL",
+                "layout": "Товар 50% площади, блок социального доказательства: бейджи «хит продаж», звёзды-рейтинг, короткие плашки-отзывы.",
+                "title": f"Почему выбирают {product_name}",
+                "points": [selling_points[2], selling_points[3], selling_points[5]],
+                "offer": "Выбор покупателей",
+            },
         ]
         selected = variants[card_index % len(variants)]
         points_text = ", ".join(selected["points"])
@@ -182,13 +203,21 @@ class CardGenerationService:
         job_id: str,
         image_size: str | None = None,
         marketplace: str | None = None,
+        n_cards: int = 3,
     ) -> dict[str, Any]:
         normalized_image_size = normalize_image_size(image_size or self._image_size)
         normalized_marketplace = normalize_marketplace(marketplace or DEFAULT_MARKETPLACE)
+        normalized_n_cards = max(1, min(6, n_cards))
         analysis_prompt = self._build_analyze_prompt(refinement_prompt)
         analysis = self._text_client.analyze_product(image_path=image_path, prompt=analysis_prompt)
         cards = self._generate_cards(
-            analysis, image_path, refinement_prompt, job_id, normalized_image_size, normalized_marketplace
+            analysis,
+            image_path,
+            refinement_prompt,
+            job_id,
+            normalized_image_size,
+            normalized_marketplace,
+            normalized_n_cards,
         )
         listing_prompt = self._build_listing_prompt(analysis, refinement_prompt, normalized_marketplace)
         listing_content = self._text_client.generate_listing(listing_prompt)
@@ -201,6 +230,7 @@ class CardGenerationService:
                 "refinement_prompt": refinement_prompt,
                 "image_size": normalized_image_size,
                 "marketplace": normalized_marketplace,
+                "n_cards": normalized_n_cards,
             },
             "analysis": analysis,
             "cards": cards,

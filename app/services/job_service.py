@@ -127,11 +127,12 @@ class JobService:
         refinement_prompt: str,
         image_size: str | None,
         marketplace: str | None,
+        n_cards: int,
     ) -> None:
         self._job_repository.save(JobState(job_id=job_id, status="processing"))
         try:
             result = self._card_generation_service.build_result(
-                image_path, refinement_prompt, job_id, image_size, marketplace
+                image_path, refinement_prompt, job_id, image_size, marketplace, n_cards
             )
             result_path = self._output_dir / f"{job_id}_result.json"
             result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -146,13 +147,16 @@ class JobService:
         refinement_prompt: str,
         image_size: str | None = None,
         marketplace: str | None = None,
+        n_cards: int = 3,
     ) -> JobState:
         job_id = uuid.uuid4().hex
         image_path = self._prepare_input_image(image_bytes, image_filename, job_id)
 
         queued_job = JobState(job_id=job_id, status="queued")
         self._job_repository.save(queued_job)
-        self._executor.submit(self._run_job, job_id, image_path, refinement_prompt, image_size, marketplace)
+        self._executor.submit(
+            self._run_job, job_id, image_path, refinement_prompt, image_size, marketplace, n_cards
+        )
         return queued_job
 
     def get(self, job_id: str) -> JobState | None:
