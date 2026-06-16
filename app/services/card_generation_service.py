@@ -17,6 +17,21 @@ from app.prompts import (
 )
 
 
+DEFAULT_CARD_COUNT = 3
+MIN_CARD_COUNT = 1
+MAX_CARD_COUNT = 6
+
+
+def normalize_card_count(value: int | str | None) -> int:
+    try:
+        parsed = int(value) if value is not None else DEFAULT_CARD_COUNT
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("n_cards должен быть целым числом") from exc
+    if parsed < MIN_CARD_COUNT or parsed > MAX_CARD_COUNT:
+        raise RuntimeError(f"n_cards должен быть от {MIN_CARD_COUNT} до {MAX_CARD_COUNT}")
+    return parsed
+
+
 class CardGenerationService:
     def __init__(
         self,
@@ -80,6 +95,7 @@ class CardGenerationService:
     def _build_card_prompt(analysis: dict[str, Any], card_index: int, refinement_prompt: str, marketplace: str) -> str:
         product_name = analysis.get("product_name") or analysis.get("product_type") or "товар"
         short_title = analysis.get("short_title") or f"{product_name} для ежедневного использования"
+        marketplace_name = marketplace_label(marketplace)
         selling_points = list(analysis.get("selling_points", []))
         while len(selling_points) < 6:
             selling_points.append("Качественные материалы")
@@ -135,7 +151,7 @@ class CardGenerationService:
         points_text = ", ".join(selected["points"])
 
         return f"""
-Используй товар с прикреплённого фото как визуальный референс для создания рекламной карточки маркетплейса.
+Используй товар с прикреплённого фото как визуальный референс для создания рекламной карточки маркетплейса {marketplace_name}.
 
 {marketplace_card_guidance(marketplace)}
 СТИЛЬ: {style}
@@ -174,7 +190,7 @@ class CardGenerationService:
         job_id: str,
         image_size: str,
         marketplace: str,
-        n_cards: int = 3,
+        n_cards: int = DEFAULT_CARD_COUNT,
     ) -> list[str]:
         result_paths: dict[int, str] = {}
         with ThreadPoolExecutor(max_workers=n_cards) as executor:
@@ -203,11 +219,11 @@ class CardGenerationService:
         job_id: str,
         image_size: str | None = None,
         marketplace: str | None = None,
-        n_cards: int = 3,
+        n_cards: int | str | None = DEFAULT_CARD_COUNT,
     ) -> dict[str, Any]:
         normalized_image_size = normalize_image_size(image_size or self._image_size)
         normalized_marketplace = normalize_marketplace(marketplace or DEFAULT_MARKETPLACE)
-        normalized_n_cards = max(1, min(6, n_cards))
+        normalized_n_cards = normalize_card_count(n_cards)
         analysis_prompt = self._build_analyze_prompt(refinement_prompt)
         analysis = self._text_client.analyze_product(image_path=image_path, prompt=analysis_prompt)
         cards = self._generate_cards(
