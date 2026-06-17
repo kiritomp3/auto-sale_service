@@ -20,6 +20,8 @@ from app.prompts import (
 DEFAULT_CARD_COUNT = 3
 MIN_CARD_COUNT = 1
 MAX_CARD_COUNT = 6
+ALL_MARKETPLACE = "all"
+ALL_MARKETPLACE_ALIASES = frozenset({"all", "all_marketplaces", "marketplaces", "multi", "vse", "vsyo", "все"})
 
 
 def normalize_card_count(value: int | str | None) -> int:
@@ -30,6 +32,13 @@ def normalize_card_count(value: int | str | None) -> int:
     if parsed < MIN_CARD_COUNT or parsed > MAX_CARD_COUNT:
         raise RuntimeError(f"n_cards должен быть от {MIN_CARD_COUNT} до {MAX_CARD_COUNT}")
     return parsed
+
+
+def normalize_card_marketplace(value: str | None) -> str:
+    normalized = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in ALL_MARKETPLACE_ALIASES:
+        return ALL_MARKETPLACE
+    return normalize_marketplace(value)
 
 
 class CardGenerationService:
@@ -71,6 +80,61 @@ class CardGenerationService:
 
     @staticmethod
     def _build_listing_prompt(analysis: dict[str, Any], refinement_prompt: str, marketplace: str) -> str:
+        if marketplace == ALL_MARKETPLACE:
+            return f"""
+Сгенерируй контент карточки товара сразу для WB, Ozon и Avito на русском языке.
+{marketplace_listing_guidance(marketplace)}
+Верни строго JSON без markdown:
+{{
+  "title": str,
+  "subtitle": str,
+  "bullet_points": list[str],
+  "full_description": str,
+  "specifications": list[str],
+  "seo_keywords": list[str],
+  "search_queries": list[str],
+  "marketplaces": {{
+    "wildberries": {{
+      "title": str,
+      "subtitle": str,
+      "bullet_points": list[str],
+      "full_description": str,
+      "specifications": list[str],
+      "seo_keywords": list[str],
+      "search_queries": list[str]
+    }},
+    "ozon": {{
+      "title": str,
+      "subtitle": str,
+      "bullet_points": list[str],
+      "full_description": str,
+      "specifications": list[str],
+      "seo_keywords": list[str],
+      "search_queries": list[str]
+    }},
+    "avito": {{
+      "title": str,
+      "subtitle": str,
+      "bullet_points": list[str],
+      "full_description": str,
+      "specifications": list[str],
+      "seo_keywords": list[str],
+      "search_queries": list[str]
+    }}
+  }}
+}}
+
+Верхний уровень сделай универсальным. В marketplaces адаптируй тексты под конкретные площадки:
+- wildberries: короткий продающий заголовок и SEO для WB.
+- ozon: более подробный заголовок и структурированные характеристики.
+- avito: простой честный текст объявления без рекламного перегруза.
+
+Используй данные анализа:
+{json.dumps(analysis, ensure_ascii=False, indent=2)}
+
+Уточнение от пользователя: {refinement_prompt or 'нет'}
+""".strip()
+
         return f"""
 Сгенерируй контент карточки товара для маркетплейса {marketplace_label(marketplace)} на русском языке.
 {marketplace_listing_guidance(marketplace)}
@@ -222,7 +286,7 @@ class CardGenerationService:
         n_cards: int | str | None = DEFAULT_CARD_COUNT,
     ) -> dict[str, Any]:
         normalized_image_size = normalize_image_size(image_size or self._image_size)
-        normalized_marketplace = normalize_marketplace(marketplace or DEFAULT_MARKETPLACE)
+        normalized_marketplace = normalize_card_marketplace(marketplace or DEFAULT_MARKETPLACE)
         normalized_n_cards = normalize_card_count(n_cards)
         analysis_prompt = self._build_analyze_prompt(refinement_prompt)
         analysis = self._text_client.analyze_product(image_path=image_path, prompt=analysis_prompt)

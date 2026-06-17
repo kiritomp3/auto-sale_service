@@ -28,7 +28,6 @@ from app.models import (
     OzonInsightsResponse,
     TryOnModelsResponse,
 )
-from app.config import normalize_marketplace
 from app.repositories.metrics_snapshot_repository import RedisMetricsSnapshotRepository
 from app.services.avito_auth_service import AvitoAuthService
 from app.services.job_service import JobService
@@ -77,9 +76,7 @@ def build_router(
             raise HTTPException(status_code=400, detail="Количество карточек должно быть от 1 до 6")
         payload = await image.read()
         try:
-            job = job_service.enqueue(
-                payload, image.filename, refinement_prompt, size, normalize_marketplace(marketplace), n_cards
-            )
+            job = job_service.enqueue(payload, image.filename, refinement_prompt, size, marketplace, n_cards)
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return CardJobResponse(job_id=job.job_id, status=job.status)
