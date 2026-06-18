@@ -109,6 +109,7 @@ def build_router(
         model_id: str = Form(default=""),
         model_image: UploadFile | None = File(default=None),
         prompt: str = Form(default=""),
+        n_cards: int = Form(default=1),
     ) -> CardJobResponse:
         svc = _require_tryon()
         if not garment.filename:
@@ -129,6 +130,7 @@ def build_router(
                 model_bytes=model_bytes,
                 model_filename=model_filename,
                 extra_prompt=prompt,
+                n_images=n_cards,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
