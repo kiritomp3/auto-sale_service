@@ -1,4 +1,4 @@
-# Deploy WB Cards Service on `api.auto-sale.pro`
+# Deploy WB Cards Service on `api.auto-sell.site`
 
 ## 1. Подготовка сервера (Ubuntu)
 
@@ -13,7 +13,7 @@ sudo systemctl enable --now nginx
 
 ## 2. DNS для поддомена
 
-У регистратора домена `auto-sale.pro` создайте запись:
+У регистратора домена `auto-sell.site` создайте запись:
 
 - Тип: `A`
 - Имя: `api`
@@ -22,7 +22,7 @@ sudo systemctl enable --now nginx
 Проверка (должен вернуться IP сервера):
 
 ```bash
-dig +short api.auto-sale.pro
+dig +short api.auto-sell.site
 ```
 
 ## 3. Клонирование и настройка проекта
@@ -53,17 +53,17 @@ docker compose logs -f wb-cards-api
 
 Это нужно, чтобы внешние запросы шли только через Nginx.
 
-## 5. Настройка Nginx для `api.auto-sale.pro`
+## 5. Настройка Nginx для `api.auto-sell.site`
 
 В репозитории уже есть готовый конфиг:
 
-- `deploy/nginx/api.auto-sale.pro.conf`
+- `deploy/nginx/api.auto-sell.site.conf`
 
 Примените его на сервере:
 
 ```bash
-sudo cp deploy/nginx/api.auto-sale.pro.conf /etc/nginx/sites-available/api.auto-sale.pro.conf
-sudo ln -sf /etc/nginx/sites-available/api.auto-sale.pro.conf /etc/nginx/sites-enabled/api.auto-sale.pro.conf
+sudo cp deploy/nginx/api.auto-sell.site.conf /etc/nginx/sites-available/api.auto-sell.site.conf
+sudo ln -sf /etc/nginx/sites-available/api.auto-sell.site.conf /etc/nginx/sites-enabled/api.auto-sell.site.conf
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -71,7 +71,7 @@ sudo systemctl reload nginx
 ## 6. Выпуск SSL-сертификата (Let's Encrypt)
 
 ```bash
-sudo certbot --nginx -d api.auto-sale.pro
+sudo certbot --nginx -d api.auto-sell.site
 ```
 
 Проверьте автообновление:
@@ -83,13 +83,13 @@ sudo systemctl status certbot.timer
 ## 7. Проверка после деплоя
 
 ```bash
-curl -I https://api.auto-sale.pro/docs
+curl -I https://api.auto-sell.site/docs
 ```
 
 Smoke test создания задачи:
 
 ```bash
-curl -X POST "https://api.auto-sale.pro/cards" \
+curl -X POST "https://api.auto-sell.site/cards" \
   -F "image=@input/product.jpg" \
   -F "refinement_prompt=премиальный стиль"
 ```
@@ -97,7 +97,7 @@ curl -X POST "https://api.auto-sale.pro/cards" \
 Запрос результата по `job_id`:
 
 ```bash
-curl "https://api.auto-sale.pro/crads/<job_id>"
+curl "https://api.auto-sell.site/crads/<job_id>"
 ```
 
 ## 8. Обновление сервиса ()()()
