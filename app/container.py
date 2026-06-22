@@ -4,8 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import redis
 
-from app.clients.kie_ai_client import KieAIImageClient
-from app.clients.openai_client import OpenAIClient
+from app.clients.kie_ai_client import KieAIChatClient, KieAIImageClient
 from app.config import Settings
 from app.repositories.avito_auth_repository import RedisAvitoAuthRepository
 from app.repositories.job_repository import RedisJobRepository
@@ -30,14 +29,10 @@ class Container:
             key_prefix=settings.redis_job_key_prefix,
             ttl_seconds=settings.job_ttl_seconds,
         )
-        self.openai_client = OpenAIClient(
-            api_key=settings.openai_api_key,
-            text_model=settings.text_model,
-            image_model="",
-        )
+        self.kie_ai_chat_client = KieAIChatClient(api_key=settings.kie_ai_api_key)
         self.kie_ai_image_client = KieAIImageClient(api_key=settings.kie_ai_api_key)
         self.card_generation_service = CardGenerationService(
-            text_client=self.openai_client,
+            text_client=self.kie_ai_chat_client,
             image_client=self.kie_ai_image_client,
             output_dir=settings.output_dir,
             image_size=settings.image_size,
@@ -87,6 +82,6 @@ class Container:
             snapshot_repository=self.metrics_snapshot_repository,
         )
         self.ozon_ai_chat_service = OzonAIChatService(
-            openai_api_key=settings.openai_api_key,
+            kie_ai_client=self.kie_ai_chat_client,
             insights_service=self.ozon_insights_service,
         )

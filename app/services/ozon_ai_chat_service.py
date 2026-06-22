@@ -3,15 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from openai import OpenAI
-
+from app.clients.kie_ai_client import KieAIChatClient
 from app.models import OzonAIChatResponse, OzonInsightsResponse
 
 if TYPE_CHECKING:
     from app.services.ozon_insights_service import OzonInsightsService
-
-# gpt-4o-mini — достаточно умный и очень дешёвый ($0.15/$0.60 за 1M токенов)
-_MODEL = "gpt-4o-mini"
 
 _SYSTEM_PROMPT = """Ты — опытный аналитик продаж на маркетплейсе Ozon. \
 Тебе дают данные о метриках продавца за период и ты даёшь конкретные, полезные рекомендации.
@@ -123,8 +119,8 @@ def _build_prompt(insights: OzonInsightsResponse, question: str) -> str:
 
 
 class OzonAIChatService:
-    def __init__(self, openai_api_key: str, insights_service: OzonInsightsService):
-        self._openai = OpenAI(api_key=openai_api_key)
+    def __init__(self, kie_ai_client: KieAIChatClient, insights_service: OzonInsightsService):
+        self._kie = kie_ai_client
         self._insights = insights_service
 
     def chat(
@@ -147,21 +143,8 @@ class OzonAIChatService:
             analytics_service=analytics_service,
         )
 
-        # Строим промпт с данными
         user_prompt = _build_prompt(insights, question)
-
-        # Вызываем GPT-4o-mini
-        response = self._openai.chat.completions.create(
-            model=_MODEL,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.3,
-            max_tokens=1200,
-        )
-
-        answer = response.choices[0].message.content or ""
+        answer = self._kie.chat(system=_SYSTEM_PROMPT, user_prompt=user_prompt, max_tokens=1200)
         period = f"{current_date_from} — {current_date_to}"
 
         return OzonAIChatResponse(

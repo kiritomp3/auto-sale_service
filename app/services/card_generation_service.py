@@ -5,8 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from app.clients.kie_ai_client import KieAIImageClient
-from app.clients.openai_client import OpenAIClient
+from app.clients.kie_ai_client import KieAIChatClient, KieAIImageClient
 from app.config import DEFAULT_IMAGE_SIZE, DEFAULT_MARKETPLACE, normalize_image_size, normalize_marketplace
 from app.prompts import (
     DEFAULT_STYLE,
@@ -44,7 +43,7 @@ def normalize_card_marketplace(value: str | None) -> str:
 class CardGenerationService:
     def __init__(
         self,
-        text_client: OpenAIClient,
+        text_client: KieAIChatClient,
         image_client: KieAIImageClient,
         output_dir: Path,
         image_size: str = DEFAULT_IMAGE_SIZE,

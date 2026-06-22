@@ -1,7 +1,6 @@
 fastapi
 uvicorn
 python-multipart
-openai
 google-genai
 pillow
 pillow-heif

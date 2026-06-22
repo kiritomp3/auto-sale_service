@@ -119,3 +119,67 @@ class KieAIImageClient:
             resp = client.get(result_url)
         resp.raise_for_status()
         return base64.b64encode(resp.content).decode("utf-8")
+
+
+class KieAIChatClient:
+    """
+    Текстовый клиент через kie.ai Claude Haiku 4.5.
+
+    Совместим с Anthropic Messages API.
+    """
+
+    _URL = "https://api.kie.ai/claude/v1/messages"
+    _MODEL = "claude-haiku-4-5"
+
+    _MIME = {
+        ".gif": "image/gif",
+        ".jpeg": "image/jpeg",
+        ".jpg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+
+    def __init__(self, api_key: str):
+        self._headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _post(self, messages: list, system: str | None = None, max_tokens: int = 4096) -> str:
+        body: dict = {"model": self._MODEL, "max_tokens": max_tokens, "stream": False, "messages": messages}
+        if system:
+            body["system"] = system
+        with httpx.Client(timeout=120) as client:
+            resp = client.post(self._URL, headers=self._headers, json=body)
+        resp.raise_for_status()
+        return resp.json()["content"][0]["text"]
+
+    @staticmethod
+    def _parse_json(text: str) -> dict:
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.strip("`").lstrip("json").strip()
+        return json.loads(text)
+
+    def analyze_product(self, image_path: Path, prompt: str) -> dict:
+        suffix = image_path.suffix.lower()
+        mime = self._MIME.get(suffix, "image/jpeg")
+        b64 = base64.b64encode(image_path.read_bytes()).decode()
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
+                ],
+            }
+        ]
+        return self._parse_json(self._post(messages))
+
+    def generate_listing(self, prompt: str) -> dict:
+        messages = [{"role": "user", "content": prompt}]
+        return self._parse_json(self._post(messages))
+
+    def chat(self, system: str, user_prompt: str, max_tokens: int = 1200) -> str:
+        messages = [{"role": "user", "content": user_prompt}]
+        return self._post(messages, system=system, max_tokens=max_tokens)
