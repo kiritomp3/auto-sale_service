@@ -6,9 +6,10 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from app.clients.kie_ai_client import KieAIImageClient
+from app.clients.kie_ai_client import KieAIChatClient, KieAIImageClient
 from app.models import JobState, TryOnModel
 from app.repositories.job_repository import RedisJobRepository
+from app.services.card_generation_service import CardGenerationService
 from app.services.job_service import prepare_image_file
 
 
@@ -48,6 +49,7 @@ class TryOnService:
     def __init__(
         self,
         job_repository: RedisJobRepository,
+        text_client: KieAIChatClient,
         image_client: KieAIImageClient,
         executor: ThreadPoolExecutor,
         temp_dir: Path,
@@ -55,6 +57,7 @@ class TryOnService:
         models_dir: Path,
     ):
         self._job_repository = job_repository
+        self._text_client = text_client
         self._image_client = image_client
         self._executor = executor
         self._temp_dir = temp_dir
@@ -111,6 +114,7 @@ class TryOnService:
         model_filename: str | None = None,
         extra_prompt: str = "",
         n_images: int | str | None = DEFAULT_TRYON_IMAGE_COUNT,
+        marketplace: str = "wb",
     ) -> JobState:
         job_id = uuid.uuid4().hex
         normalized_n_images = normalize_tryon_image_count(n_images)
@@ -126,7 +130,7 @@ class TryOnService:
 
         queued = JobState(job_id=job_id, status="queued", kind="tryon")
         self._job_repository.save(queued)
-        self._executor.submit(self._run, job_id, model_path, garment_path, extra_prompt, normalized_n_images)
+        self._executor.submit(self._run, job_id, model_path, garment_path, extra_prompt, normalized_n_images, marketplace)
         return queued
 
     def get(self, job_id: str) -> JobState | None:
@@ -167,12 +171,19 @@ class TryOnService:
                 result_paths[index] = path
         return [result_paths[index] for index in range(n_images)]
 
-    def _run(self, job_id: str, model_path: Path, garment_path: Path, extra_prompt: str, n_images: int) -> None:
+    def _run(self, job_id: str, model_path: Path, garment_path: Path, extra_prompt: str, n_images: int, marketplace: str) -> None:
         self._job_repository.save(JobState(job_id=job_id, status="processing", kind="tryon"))
         try:
             prompt = TRYON_PROMPT
             if extra_prompt.strip():
                 prompt = f"{prompt}\n\nДополнительно от пользователя: {extra_prompt.strip()}"
+
+            # Анализ одежды и листинг параллельно с генерацией изображений
+            analyze_prompt = CardGenerationService._build_analyze_prompt(extra_prompt)
+            analysis = self._text_client.analyze_product(image_path=garment_path, prompt=analyze_prompt)
+
+            listing_prompt = CardGenerationService._build_listing_prompt(analysis, extra_prompt, marketplace)
+            listing_content = self._text_client.generate_listing(listing_prompt)
 
             # Порядок важен: [модель, одежда]
             images = self._generate_tryon_images(prompt, model_path, garment_path, job_id, n_images)
@@ -183,11 +194,14 @@ class TryOnService:
                     status="done",
                     kind="tryon",
                     images=images,
+                    analysis=analysis,
+                    listing_content=listing_content,
                     input={
                         "model_path": str(model_path),
                         "garment_path": str(garment_path),
                         "extra_prompt": extra_prompt,
                         "n_cards": n_images,
+                        "marketplace": marketplace,
                     },
                 )
             )

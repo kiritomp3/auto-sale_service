@@ -67,6 +67,7 @@ class Container:
 
         self.tryon_service = TryOnService(
             job_repository=self.job_repository,
+            text_client=self.kie_ai_chat_client,
             image_client=self.kie_ai_image_client,
             executor=self.executor,
             temp_dir=settings.temp_dir,
