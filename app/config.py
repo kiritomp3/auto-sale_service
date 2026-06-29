@@ -34,7 +34,7 @@ class Settings:
     avito_base_url: str = "https://api.avito.ru"
     avito_publish_path: str = "/autoload/v2/items"
     avito_session_ttl_seconds: int = 60 * 60 * 12
-    avito_publish_interval_seconds: int = 3600
+    avito_publish_interval_seconds: int = 3700
     avito_scheduler_interval_seconds: int = 30
     redis_url: str = "redis://localhost:6379/0"
     redis_ozon_session_prefix: str = "ozon:session"
@@ -72,13 +72,13 @@ class Settings:
         if avito_ttl_value <= 0:
             raise RuntimeError("AVITO_SESSION_TTL_SECONDS must be greater than 0")
 
-        avito_interval_raw = os.getenv("AVITO_PUBLISH_INTERVAL_SECONDS", "3600")
+        avito_interval_raw = os.getenv("AVITO_PUBLISH_INTERVAL_SECONDS", "3700")
         try:
             avito_interval_value = int(avito_interval_raw)
         except ValueError as exc:
             raise RuntimeError("AVITO_PUBLISH_INTERVAL_SECONDS must be an integer") from exc
-        if avito_interval_value < 3600:
-            raise RuntimeError("AVITO_PUBLISH_INTERVAL_SECONDS cannot be lower than 3600")
+        if avito_interval_value < 3700:
+            raise RuntimeError("AVITO_PUBLISH_INTERVAL_SECONDS cannot be lower than 3700")
 
         avito_scheduler_interval_raw = os.getenv("AVITO_SCHEDULER_INTERVAL_SECONDS", "30")
         try:

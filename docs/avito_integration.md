@@ -77,4 +77,4 @@ Statuses: `queued`, `scheduled`, `publishing`, `published`, `failed`, `cancelled
 | GET | `/avito/export?format=xlsx` | XLSX export |
 | GET | `/avito/export?format=xml` | XML export |
 
-The service does not distribute listings across accounts, use proxies, emulate manual actions, or provide any other bypass mechanics. The scheduler performs no more than one API publication attempt per hour for each connected Avito account.
+The service does not distribute listings across accounts, use proxies, emulate manual actions, or provide any other bypass mechanics. The scheduler waits at least 3700 seconds between API publication attempts for each connected Avito account, giving a small safety buffer above Avito's one-publication-per-hour limit.

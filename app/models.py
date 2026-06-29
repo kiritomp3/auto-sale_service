@@ -241,7 +241,7 @@ class AvitoQueueRequest(BaseModel):
 class AvitoQueueResponse(BaseModel):
     account_id: str
     warning: str = AVITO_API_LIMIT_WARNING
-    publish_interval_seconds: int = 3600
+    publish_interval_seconds: int = 3700
     total: int
     items: list[AvitoQueuedListing]
 
@@ -249,7 +249,7 @@ class AvitoQueueResponse(BaseModel):
 class AvitoScheduleResponse(BaseModel):
     account_id: str
     warning: str = AVITO_API_LIMIT_WARNING
-    publish_interval_seconds: int = 3600
+    publish_interval_seconds: int = 3700
     items: list[AvitoQueuedListing]
 
 

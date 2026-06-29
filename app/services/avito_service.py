@@ -49,8 +49,8 @@ class AvitoService:
         scheduler_interval_seconds: int,
         output_dir: Path,
     ):
-        if publish_interval_seconds < 3600:
-            raise ValueError("Avito publish interval cannot be lower than 3600 seconds")
+        if publish_interval_seconds < 3700:
+            raise ValueError("Avito publish interval cannot be lower than 3700 seconds")
         self._repository = repository
         self._base_url = base_url
         self._publish_path = publish_path
