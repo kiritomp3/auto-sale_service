@@ -3,14 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.clients.avito_client import AvitoClient
 from app.clients.ozon_seller_client import OzonSellerClient
 from app.models import (
-    AvitoAccountResponse,
-    AvitoAuthLoginRequest,
-    AvitoAuthLoginResponse,
-    AvitoAuthLogoutResponse,
-    AvitoItemsResponse,
     CardJobResponse,
     JobState,
     OzonAIChatRequest,
@@ -29,7 +23,6 @@ from app.models import (
     TryOnModelsResponse,
 )
 from app.repositories.metrics_snapshot_repository import RedisMetricsSnapshotRepository
-from app.services.avito_auth_service import AvitoAuthService
 from app.services.job_service import JobService
 from app.services.ozon_analytics_service import OzonAnalyticsService
 from app.services.ozon_auth_service import OzonAuthService
@@ -43,8 +36,6 @@ def build_router(
     job_service: JobService,
     ozon_auth_service: OzonAuthService,
     ozon_base_url: str,
-    avito_auth_service: AvitoAuthService | None = None,
-    avito_base_url: str = "https://api.avito.ru",
     tryon_service: TryOnService | None = None,
     metrics_snapshot_repository: RedisMetricsSnapshotRepository | None = None,
     ozon_insights_service: OzonInsightsService | None = None,
@@ -108,9 +99,9 @@ def build_router(
         garment: UploadFile = File(..., description="Фото одежды"),
         model_id: str = Form(default=""),
         model_image: UploadFile | None = File(default=None),
+        marketplace: str = Form(default="wb"),
         prompt: str = Form(default=""),
         n_cards: int = Form(default=1),
-        marketplace: str = Form(default="wb"),
     ) -> CardJobResponse:
         svc = _require_tryon()
         if not garment.filename:
@@ -130,9 +121,9 @@ def build_router(
                 model_id=model_id or None,
                 model_bytes=model_bytes,
                 model_filename=model_filename,
+                marketplace=marketplace,
                 extra_prompt=prompt,
                 n_images=n_cards,
-                marketplace=marketplace,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -164,86 +155,6 @@ def build_router(
     def ozon_logout(token: str = Depends(_get_token)) -> OzonAuthLogoutResponse:
         ozon_auth_service.logout(token)
         return OzonAuthLogoutResponse()
-
-    # ------------------------------------------------------------------
-    # Avito marketplace
-    # ------------------------------------------------------------------
-
-    def _require_avito() -> AvitoAuthService:
-        if avito_auth_service is None:
-            raise HTTPException(status_code=503, detail="Интеграция Avito недоступна")
-        return avito_auth_service
-
-    @router.post("/auth/avito/login", response_model=AvitoAuthLoginResponse)
-    def avito_login(payload: AvitoAuthLoginRequest) -> AvitoAuthLoginResponse:
-        svc = _require_avito()
-        try:
-            session = svc.login(
-                client_id=payload.avito_client_id,
-                client_secret=payload.avito_client_secret,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return AvitoAuthLoginResponse(
-            access_token=session.token,
-            expires_in=svc.session_ttl_seconds,
-            expires_at=session.expires_at,
-        )
-
-    @router.post("/auth/avito/logout", response_model=AvitoAuthLogoutResponse)
-    def avito_logout(token: str = Depends(_get_token)) -> AvitoAuthLogoutResponse:
-        svc = _require_avito()
-        svc.logout(token)
-        return AvitoAuthLogoutResponse()
-
-    @router.get("/avito/account", response_model=AvitoAccountResponse)
-    def avito_account(token: str = Depends(_get_token)) -> AvitoAccountResponse:
-        svc = _require_avito()
-        session = svc.get_session(token)
-        if session is None:
-            raise HTTPException(status_code=401, detail="Сессия не найдена или истекла")
-        client = AvitoClient(
-            client_id=session.client_id,
-            client_secret=session.client_secret,
-            base_url=avito_base_url,
-        )
-        try:
-            account = client.get_self(svc.get_access_token(session))
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Avito API error: {exc}") from exc
-        return AvitoAccountResponse(account=account)
-
-    @router.get("/avito/items", response_model=AvitoItemsResponse)
-    def avito_items(
-        per_page: int = 25,
-        page: int = 1,
-        status: str = "active",
-        token: str = Depends(_get_token),
-    ) -> AvitoItemsResponse:
-        svc = _require_avito()
-        session = svc.get_session(token)
-        if session is None:
-            raise HTTPException(status_code=401, detail="Сессия не найдена или истекла")
-        client = AvitoClient(
-            client_id=session.client_id,
-            client_secret=session.client_secret,
-            base_url=avito_base_url,
-        )
-        try:
-            data = client.list_items(
-                svc.get_access_token(session),
-                per_page=min(per_page, 100),
-                page=page,
-                status=status,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Avito API error: {exc}") from exc
-        return AvitoItemsResponse(
-            items=data.get("resources") or data.get("items") or [],
-            meta=data.get("meta", {}),
-        )
 
     @router.post("/ozon/drafts", response_model=OzonDraftCreateResponse)
     def create_ozon_drafts(

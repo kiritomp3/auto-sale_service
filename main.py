@@ -63,8 +63,6 @@ app.include_router(
         job_service=container.job_service,
         ozon_auth_service=container.ozon_auth_service,
         ozon_base_url=settings.ozon_base_url,
-        avito_auth_service=container.avito_auth_service,
-        avito_base_url=settings.avito_base_url,
         tryon_service=container.tryon_service,
         metrics_snapshot_repository=container.metrics_snapshot_repository,
         ozon_insights_service=container.ozon_insights_service,

@@ -100,33 +100,6 @@ class OzonAuthLogoutResponse(BaseModel):
     ok: bool = True
 
 
-class AvitoAuthLoginRequest(BaseModel):
-    avito_client_id: str = Field(min_length=1)
-    avito_client_secret: str = Field(min_length=1)
-
-
-class AvitoAuthLoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "Bearer"
-    expires_in: int
-    expires_at: datetime
-
-
-class AvitoAuthLogoutResponse(BaseModel):
-    ok: bool = True
-
-
-class AvitoAccountResponse(BaseModel):
-    ok: bool = True
-    account: dict[str, Any]
-
-
-class AvitoItemsResponse(BaseModel):
-    ok: bool = True
-    items: list[dict[str, Any]]
-    meta: dict[str, Any] = Field(default_factory=dict)
-
-
 # ---------------------------------------------------------------------------
 # Try-on (наложение одежды на модель)
 # ---------------------------------------------------------------------------

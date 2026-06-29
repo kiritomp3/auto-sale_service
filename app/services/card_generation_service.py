@@ -81,7 +81,7 @@ class CardGenerationService:
     def _build_listing_prompt(analysis: dict[str, Any], refinement_prompt: str, marketplace: str) -> str:
         if marketplace == ALL_MARKETPLACE:
             return f"""
-Сгенерируй контент карточки товара сразу для WB, Ozon и Avito на русском языке.
+Сгенерируй контент карточки товара сразу для WB и Ozon на русском языке.
 {marketplace_listing_guidance(marketplace)}
 Верни строго JSON без markdown:
 {{
@@ -110,15 +110,6 @@ class CardGenerationService:
       "specifications": list[str],
       "seo_keywords": list[str],
       "search_queries": list[str]
-    }},
-    "avito": {{
-      "title": str,
-      "subtitle": str,
-      "bullet_points": list[str],
-      "full_description": str,
-      "specifications": list[str],
-      "seo_keywords": list[str],
-      "search_queries": list[str]
     }}
   }}
 }}
@@ -126,7 +117,6 @@ class CardGenerationService:
 Верхний уровень сделай универсальным. В marketplaces адаптируй тексты под конкретные площадки:
 - wildberries: короткий продающий заголовок и SEO для WB.
 - ozon: более подробный заголовок и структурированные характеристики.
-- avito: простой честный текст объявления без рекламного перегруза.
 
 Используй данные анализа:
 {json.dumps(analysis, ensure_ascii=False, indent=2)}
