@@ -81,7 +81,7 @@ class CardGenerationService:
     def _build_listing_prompt(analysis: dict[str, Any], refinement_prompt: str, marketplace: str) -> str:
         if marketplace == ALL_MARKETPLACE:
             return f"""
-Сгенерируй контент карточки товара сразу для WB и Ozon на русском языке.
+Сгенерируй контент карточки товара сразу для WB, Ozon и Авито на русском языке.
 {marketplace_listing_guidance(marketplace)}
 Верни строго JSON без markdown:
 {{
@@ -110,6 +110,19 @@ class CardGenerationService:
       "specifications": list[str],
       "seo_keywords": list[str],
       "search_queries": list[str]
+    }},
+    "avito": {{
+      "title": str,
+      "subtitle": str,
+      "bullet_points": list[str],
+      "full_description": str,
+      "specifications": list[str],
+      "seo_keywords": list[str],
+      "search_queries": list[str],
+      "category": str,
+      "price_hint": str,
+      "location_hint": str,
+      "attributes": dict
     }}
   }}
 }}
@@ -117,6 +130,37 @@ class CardGenerationService:
 Верхний уровень сделай универсальным. В marketplaces адаптируй тексты под конкретные площадки:
 - wildberries: короткий продающий заголовок и SEO для WB.
 - ozon: более подробный заголовок и структурированные характеристики.
+- avito: объявление в стиле классифайда с категорией, ценой, локацией и честным описанием.
+
+Используй данные анализа:
+{json.dumps(analysis, ensure_ascii=False, indent=2)}
+
+Уточнение от пользователя: {refinement_prompt or 'нет'}
+""".strip()
+
+        if marketplace == "avito":
+            return f"""
+Сгенерируй контент объявления для Авито на русском языке.
+{marketplace_listing_guidance(marketplace)}
+Верни строго JSON без markdown:
+{{
+  "title": str,
+  "subtitle": str,
+  "bullet_points": list[str],
+  "full_description": str,
+  "specifications": list[str],
+  "seo_keywords": list[str],
+  "search_queries": list[str],
+  "category": str,
+  "price": number | null,
+  "price_hint": str,
+  "location_hint": str,
+  "condition": str,
+  "attributes": dict,
+  "publication_notes": list[str]
+}}
+
+Сделай объявление честным и пригодным для проверки перед публикацией. Если точную цену или город нельзя определить по фото, верни null в price и объясни в price_hint/location_hint, что пользователю нужно подтвердить значение.
 
 Используй данные анализа:
 {json.dumps(analysis, ensure_ascii=False, indent=2)}

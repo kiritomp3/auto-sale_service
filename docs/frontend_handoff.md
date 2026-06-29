@@ -11,7 +11,7 @@
 | `image` | file | да | фото товара |
 | `refinement_prompt` | string | нет | уточнение или стиль |
 | `size` | string | нет | `1024x1024` \| `1024x1536` \| `1536x1024` \| `auto` |
-| `marketplace` | string | нет | `wb` по умолчанию \| `ozon` |
+| `marketplace` | string | нет | `wb` по умолчанию \| `ozon` \| `avito` |
 
 Ответ: `{ "job_id": "...", "status": "queued" }`, дальше поллинг `GET /crads/{job_id}`.
 
@@ -51,7 +51,7 @@
 | `model_image` | file | нет* | своё фото модели, альтернатива `model_id` |
 | `prompt` | string | нет | дополнительные пожелания |
 | `n_cards` | number | нет | количество изображений, 1-6 |
-| `marketplace` | string | нет | `wb` по умолчанию \| `ozon` |
+| `marketplace` | string | нет | `wb` по умолчанию \| `ozon` \| `avito` |
 
 \* Нужно передать либо `model_id`, либо `model_image`.
 

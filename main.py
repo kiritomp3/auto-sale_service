@@ -35,7 +35,7 @@ container = Container(settings)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(
+    cleanup_task = asyncio.create_task(
         _cleanup_loop(
             output_dir=settings.output_dir,
             temp_dir=settings.temp_dir,
@@ -43,8 +43,10 @@ async def lifespan(app: FastAPI):
             interval=settings.cleanup_interval_seconds,
         )
     )
+    avito_scheduler_task = asyncio.create_task(container.avito_service.run_scheduler_loop())
     yield
-    task.cancel()
+    cleanup_task.cancel()
+    avito_scheduler_task.cancel()
 
 
 app = FastAPI(
@@ -67,5 +69,6 @@ app.include_router(
         metrics_snapshot_repository=container.metrics_snapshot_repository,
         ozon_insights_service=container.ozon_insights_service,
         ozon_ai_chat_service=container.ozon_ai_chat_service,
+        avito_service=container.avito_service,
     )
 )

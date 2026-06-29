@@ -6,9 +6,11 @@ import redis
 
 from app.clients.kie_ai_client import KieAIChatClient, KieAIImageClient
 from app.config import Settings
+from app.repositories.avito_repository import RedisAvitoRepository
 from app.repositories.job_repository import RedisJobRepository
 from app.repositories.metrics_snapshot_repository import RedisMetricsSnapshotRepository
 from app.repositories.ozon_auth_repository import RedisOzonAuthRepository
+from app.services.avito_service import AvitoService
 from app.services.card_generation_service import CardGenerationService
 from app.services.job_service import JobService
 from app.services.ozon_auth_service import OzonAuthService
@@ -51,6 +53,19 @@ class Container:
         self.ozon_auth_service = OzonAuthService(
             repository=self.ozon_auth_repository,
             session_ttl_seconds=settings.ozon_session_ttl_seconds,
+        )
+        self.avito_repository = RedisAvitoRepository(
+            redis_client=self.redis_client,
+            key_prefix=settings.redis_avito_prefix,
+        )
+        self.avito_service = AvitoService(
+            repository=self.avito_repository,
+            base_url=settings.avito_base_url,
+            publish_path=settings.avito_publish_path,
+            session_ttl_seconds=settings.avito_session_ttl_seconds,
+            publish_interval_seconds=settings.avito_publish_interval_seconds,
+            scheduler_interval_seconds=settings.avito_scheduler_interval_seconds,
+            output_dir=settings.output_dir,
         )
 
         self.tryon_service = TryOnService(

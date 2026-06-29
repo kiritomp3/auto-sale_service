@@ -13,7 +13,7 @@ DEFAULT_IMAGE_SIZE = "1024x1536"
 SUPPORTED_IMAGE_SIZES = frozenset({"1024x1024", "1024x1536", "1536x1024", "auto"})
 
 DEFAULT_MARKETPLACE = "wb"
-SUPPORTED_MARKETPLACES = frozenset({"wb", "ozon"})
+SUPPORTED_MARKETPLACES = frozenset({"wb", "ozon", "avito"})
 
 
 def normalize_image_size(value: str | None) -> str:
@@ -31,8 +31,14 @@ class Settings:
     kie_ai_api_key: str
     ozon_base_url: str = "https://api-seller.ozon.ru"
     ozon_session_ttl_seconds: int = 60 * 60 * 12
+    avito_base_url: str = "https://api.avito.ru"
+    avito_publish_path: str = "/autoload/v2/items"
+    avito_session_ttl_seconds: int = 60 * 60 * 12
+    avito_publish_interval_seconds: int = 3600
+    avito_scheduler_interval_seconds: int = 30
     redis_url: str = "redis://localhost:6379/0"
     redis_ozon_session_prefix: str = "ozon:session"
+    redis_avito_prefix: str = "avito"
     redis_job_key_prefix: str = "job"
     redis_metrics_snapshot_prefix: str = "ozon:metrics_snapshot"
     metrics_snapshot_ttl_seconds: int = 90 * 24 * 3600
@@ -58,11 +64,41 @@ class Settings:
         if ttl_value <= 0:
             raise RuntimeError("OZON_SESSION_TTL_SECONDS должен быть больше 0")
 
+        avito_ttl_raw = os.getenv("AVITO_SESSION_TTL_SECONDS", str(60 * 60 * 12))
+        try:
+            avito_ttl_value = int(avito_ttl_raw)
+        except ValueError as exc:
+            raise RuntimeError("AVITO_SESSION_TTL_SECONDS must be an integer") from exc
+        if avito_ttl_value <= 0:
+            raise RuntimeError("AVITO_SESSION_TTL_SECONDS must be greater than 0")
+
+        avito_interval_raw = os.getenv("AVITO_PUBLISH_INTERVAL_SECONDS", "3600")
+        try:
+            avito_interval_value = int(avito_interval_raw)
+        except ValueError as exc:
+            raise RuntimeError("AVITO_PUBLISH_INTERVAL_SECONDS must be an integer") from exc
+        if avito_interval_value < 3600:
+            raise RuntimeError("AVITO_PUBLISH_INTERVAL_SECONDS cannot be lower than 3600")
+
+        avito_scheduler_interval_raw = os.getenv("AVITO_SCHEDULER_INTERVAL_SECONDS", "30")
+        try:
+            avito_scheduler_interval_value = int(avito_scheduler_interval_raw)
+        except ValueError as exc:
+            raise RuntimeError("AVITO_SCHEDULER_INTERVAL_SECONDS must be an integer") from exc
+        if avito_scheduler_interval_value <= 0:
+            raise RuntimeError("AVITO_SCHEDULER_INTERVAL_SECONDS must be greater than 0")
+
         return cls(
             kie_ai_api_key=kie_ai_key,
             ozon_base_url=os.getenv("OZON_BASE_URL", "https://api-seller.ozon.ru"),
             ozon_session_ttl_seconds=ttl_value,
+            avito_base_url=os.getenv("AVITO_BASE_URL", "https://api.avito.ru"),
+            avito_publish_path=os.getenv("AVITO_PUBLISH_PATH", "/autoload/v2/items"),
+            avito_session_ttl_seconds=avito_ttl_value,
+            avito_publish_interval_seconds=avito_interval_value,
+            avito_scheduler_interval_seconds=avito_scheduler_interval_value,
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             redis_ozon_session_prefix=os.getenv("REDIS_OZON_SESSION_PREFIX", "ozon:session"),
+            redis_avito_prefix=os.getenv("REDIS_AVITO_PREFIX", "avito"),
             image_size=normalize_image_size(os.getenv("GENERATION_IMAGE_SIZE") or os.getenv("IMAGE_SIZE")),
         )

@@ -1,10 +1,23 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.clients.ozon_seller_client import OzonSellerClient
 from app.models import (
+    AvitoAccountResponse,
+    AvitoAuthLoginRequest,
+    AvitoAuthLoginResponse,
+    AvitoAuthLogoutResponse,
+    AvitoExportFormat,
+    AvitoListingDraft,
+    AvitoQueuedListing,
+    AvitoQueueRequest,
+    AvitoQueueResponse,
+    AvitoReorderRequest,
+    AvitoScheduleResponse,
+    AvitoValidationResponse,
     CardJobResponse,
     JobState,
     OzonAIChatRequest,
@@ -24,6 +37,7 @@ from app.models import (
 )
 from app.repositories.metrics_snapshot_repository import RedisMetricsSnapshotRepository
 from app.services.job_service import JobService
+from app.services.avito_service import AvitoService
 from app.services.ozon_analytics_service import OzonAnalyticsService
 from app.services.ozon_auth_service import OzonAuthService
 from app.services.ozon_draft_service import OzonDraftService
@@ -40,6 +54,7 @@ def build_router(
     metrics_snapshot_repository: RedisMetricsSnapshotRepository | None = None,
     ozon_insights_service: OzonInsightsService | None = None,
     ozon_ai_chat_service: OzonAIChatService | None = None,
+    avito_service: AvitoService | None = None,
 ) -> APIRouter:
     router = APIRouter()
     security = HTTPBearer(auto_error=False)
@@ -155,6 +170,136 @@ def build_router(
     def ozon_logout(token: str = Depends(_get_token)) -> OzonAuthLogoutResponse:
         ozon_auth_service.logout(token)
         return OzonAuthLogoutResponse()
+
+    # ------------------------------------------------------------------
+    # Avito: official queue, scheduler and exports
+    # ------------------------------------------------------------------
+
+    def _require_avito_service() -> AvitoService:
+        if avito_service is None:
+            raise HTTPException(status_code=503, detail="Avito integration is not configured")
+        return avito_service
+
+    def _get_avito_account_id(token: str = Depends(_get_token)) -> str:
+        svc = _require_avito_service()
+        session = svc.get_session(token)
+        if session is None:
+            raise HTTPException(status_code=401, detail="Avito session not found or expired")
+        return session.account_id
+
+    @router.post("/auth/avito/login", response_model=AvitoAuthLoginResponse)
+    def avito_login(payload: AvitoAuthLoginRequest) -> AvitoAuthLoginResponse:
+        svc = _require_avito_service()
+        return svc.login(
+            avito_account_id=payload.avito_account_id,
+            avito_access_token=payload.avito_access_token,
+            avito_refresh_token=payload.avito_refresh_token,
+            account_name=payload.account_name,
+        )
+
+    @router.post("/auth/avito/logout", response_model=AvitoAuthLogoutResponse)
+    def avito_logout(token: str = Depends(_get_token)) -> AvitoAuthLogoutResponse:
+        svc = _require_avito_service()
+        svc.logout(token)
+        return AvitoAuthLogoutResponse()
+
+    @router.get("/avito/account", response_model=AvitoAccountResponse)
+    def get_avito_account(account_id: str = Depends(_get_avito_account_id)) -> AvitoAccountResponse:
+        svc = _require_avito_service()
+        try:
+            return svc.get_account_response(account_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Avito account not found") from exc
+
+    @router.post("/avito/listings/validate", response_model=AvitoValidationResponse)
+    def validate_avito_listing(payload: AvitoListingDraft) -> AvitoValidationResponse:
+        svc = _require_avito_service()
+        return svc.validate_draft(payload)
+
+    @router.post("/avito/queue", response_model=AvitoQueueResponse)
+    def queue_avito_listings(
+        payload: AvitoQueueRequest,
+        account_id: str = Depends(_get_avito_account_id),
+    ) -> AvitoQueueResponse:
+        svc = _require_avito_service()
+        try:
+            return svc.queue_items(account_id, payload.items)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Avito account not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/avito/schedule", response_model=AvitoScheduleResponse)
+    def get_avito_schedule(account_id: str = Depends(_get_avito_account_id)) -> AvitoScheduleResponse:
+        svc = _require_avito_service()
+        try:
+            return svc.get_schedule(account_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Avito account not found") from exc
+
+    @router.post("/avito/queue/reorder", response_model=AvitoScheduleResponse)
+    def reorder_avito_queue(
+        payload: AvitoReorderRequest,
+        account_id: str = Depends(_get_avito_account_id),
+    ) -> AvitoScheduleResponse:
+        svc = _require_avito_service()
+        try:
+            return svc.reorder(account_id, payload.listing_ids)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Avito listing not found: {exc}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/avito/queue/{listing_id}", response_model=AvitoQueuedListing)
+    def get_avito_listing(
+        listing_id: str,
+        account_id: str = Depends(_get_avito_account_id),
+    ) -> AvitoQueuedListing:
+        svc = _require_avito_service()
+        try:
+            return svc.get_listing(account_id, listing_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Avito listing not found") from exc
+
+    @router.post("/avito/queue/{listing_id}/cancel", response_model=AvitoQueuedListing)
+    def cancel_avito_listing(
+        listing_id: str,
+        account_id: str = Depends(_get_avito_account_id),
+    ) -> AvitoQueuedListing:
+        svc = _require_avito_service()
+        try:
+            return svc.cancel_listing(account_id, listing_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Avito listing not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/avito/queue/{listing_id}/retry", response_model=AvitoQueuedListing)
+    def retry_avito_listing(
+        listing_id: str,
+        account_id: str = Depends(_get_avito_account_id),
+    ) -> AvitoQueuedListing:
+        svc = _require_avito_service()
+        try:
+            return svc.retry_listing(account_id, listing_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Avito listing not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/avito/export")
+    def export_avito_listings(
+        format: AvitoExportFormat = Query(default="csv"),
+        account_id: str = Depends(_get_avito_account_id),
+    ) -> FileResponse:
+        svc = _require_avito_service()
+        try:
+            path, media_type, filename = svc.export_listings(account_id, format)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Avito account not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return FileResponse(path=path, media_type=media_type, filename=filename)
 
     @router.post("/ozon/drafts", response_model=OzonDraftCreateResponse)
     def create_ozon_drafts(

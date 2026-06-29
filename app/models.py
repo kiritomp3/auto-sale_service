@@ -15,6 +15,10 @@ DirectionType = Literal["up", "down", "stable", "unknown"]
 AlertSeverityType = Literal["ok", "warning", "critical"]
 HealthLabelType = Literal["excellent", "good", "warning", "critical"]
 
+AvitoListingStatus = Literal["queued", "scheduled", "publishing", "published", "failed", "cancelled"]
+AvitoIssueSeverity = Literal["error", "warning"]
+AvitoExportFormat = Literal["csv", "xlsx", "xml"]
+
 
 class OzonMetricDefinition(BaseModel):
     id: str
@@ -127,6 +131,130 @@ class OzonDraftCreateRequest(BaseModel):
 
 class OzonDraftCreateResponse(BaseModel):
     result: dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Avito integration models
+# ---------------------------------------------------------------------------
+
+AVITO_API_LIMIT_WARNING = (
+    "Авито ограничивает публикацию через API: 1 объявление в час. "
+    "Мы поставим объявления в очередь и будем публиковать их автоматически по расписанию."
+)
+
+
+class AvitoAuthLoginRequest(BaseModel):
+    avito_account_id: str = Field(min_length=1)
+    avito_access_token: str = Field(min_length=1)
+    avito_refresh_token: str = ""
+    account_name: str = ""
+
+
+class AvitoAuthLoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    expires_at: datetime
+    account_id: str
+    warning: str = AVITO_API_LIMIT_WARNING
+
+
+class AvitoAuthLogoutResponse(BaseModel):
+    ok: bool = True
+
+
+class AvitoAccount(BaseModel):
+    account_id: str
+    name: str = ""
+    avito_access_token: str
+    avito_refresh_token: str = ""
+    created_at: datetime
+    updated_at: datetime
+    last_api_attempt_at: Optional[datetime] = None
+    last_published_at: Optional[datetime] = None
+
+
+class AvitoSession(BaseModel):
+    token: str
+    account_id: str
+    expires_at: datetime
+
+
+class AvitoAccountResponse(BaseModel):
+    account_id: str
+    name: str = ""
+    created_at: datetime
+    updated_at: datetime
+    last_api_attempt_at: Optional[datetime] = None
+    last_published_at: Optional[datetime] = None
+    warning: str = AVITO_API_LIMIT_WARNING
+
+
+class AvitoListingDraft(BaseModel):
+    title: str = ""
+    description: str = ""
+    price: Optional[float] = None
+    category: str = ""
+    location: str = ""
+    images: list[str] = Field(default_factory=list)
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    contact_name: str = ""
+    phone: str = ""
+    external_id: Optional[str] = None
+    listing_content: Optional[dict[str, Any]] = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AvitoValidationIssue(BaseModel):
+    severity: AvitoIssueSeverity
+    field: str
+    message: str
+
+
+class AvitoValidationResponse(BaseModel):
+    ok: bool
+    errors: list[AvitoValidationIssue] = Field(default_factory=list)
+    warnings: list[AvitoValidationIssue] = Field(default_factory=list)
+    normalized_item: dict[str, Any]
+
+
+class AvitoQueuedListing(BaseModel):
+    listing_id: str
+    account_id: str
+    status: AvitoListingStatus
+    position: int = 0
+    payload: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+    estimated_publish_at: Optional[datetime] = None
+    published_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    attempts: int = 0
+    error: Optional[str] = None
+    avito_response: Optional[dict[str, Any]] = None
+
+
+class AvitoQueueRequest(BaseModel):
+    items: list[AvitoListingDraft] = Field(min_length=1)
+
+
+class AvitoQueueResponse(BaseModel):
+    account_id: str
+    warning: str = AVITO_API_LIMIT_WARNING
+    publish_interval_seconds: int = 3600
+    total: int
+    items: list[AvitoQueuedListing]
+
+
+class AvitoScheduleResponse(BaseModel):
+    account_id: str
+    warning: str = AVITO_API_LIMIT_WARNING
+    publish_interval_seconds: int = 3600
+    items: list[AvitoQueuedListing]
+
+
+class AvitoReorderRequest(BaseModel):
+    listing_ids: list[str] = Field(min_length=1)
 
 
 # ---------------------------------------------------------------------------
