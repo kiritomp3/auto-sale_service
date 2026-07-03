@@ -9,7 +9,7 @@ from pathlib import Path
 from app.clients.kie_ai_client import KieAIChatClient, KieAIImageClient
 from app.models import JobState, TryOnModel
 from app.repositories.job_repository import RedisJobRepository
-from app.services.card_generation_service import CardGenerationService
+from app.services.card_generation_service import CardGenerationService, normalize_card_marketplace
 from app.services.job_service import prepare_image_file
 
 
@@ -174,6 +174,7 @@ class TryOnService:
     def _run(self, job_id: str, model_path: Path, garment_path: Path, extra_prompt: str, n_images: int, marketplace: str) -> None:
         self._job_repository.save(JobState(job_id=job_id, status="processing", kind="tryon"))
         try:
+            normalized_marketplace = normalize_card_marketplace(marketplace)
             prompt = TRYON_PROMPT
             if extra_prompt.strip():
                 prompt = f"{prompt}\n\nДополнительно от пользователя: {extra_prompt.strip()}"
@@ -182,8 +183,13 @@ class TryOnService:
             analyze_prompt = CardGenerationService._build_analyze_prompt(extra_prompt)
             analysis = self._text_client.analyze_product(image_path=garment_path, prompt=analyze_prompt)
 
-            listing_prompt = CardGenerationService._build_listing_prompt(analysis, extra_prompt, marketplace)
+            listing_prompt = CardGenerationService._build_listing_prompt(analysis, extra_prompt, normalized_marketplace)
             listing_content = self._text_client.generate_listing(listing_prompt)
+            listing_content = CardGenerationService.normalize_listing_content(
+                listing_content,
+                analysis,
+                normalized_marketplace,
+            )
 
             # Порядок важен: [модель, одежда]
             images = self._generate_tryon_images(prompt, model_path, garment_path, job_id, n_images)
@@ -201,7 +207,7 @@ class TryOnService:
                         "garment_path": str(garment_path),
                         "extra_prompt": extra_prompt,
                         "n_cards": n_images,
-                        "marketplace": marketplace,
+                        "marketplace": normalized_marketplace,
                     },
                 )
             )

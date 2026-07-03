@@ -13,7 +13,22 @@ DEFAULT_IMAGE_SIZE = "1024x1536"
 SUPPORTED_IMAGE_SIZES = frozenset({"1024x1024", "1024x1536", "1536x1024", "auto"})
 
 DEFAULT_MARKETPLACE = "wb"
-SUPPORTED_MARKETPLACES = frozenset({"wb", "ozon", "avito"})
+SUPPORTED_MARKETPLACES = frozenset({"wb", "ozon", "avito", "yandex_market", "megamarket"})
+MARKETPLACE_ALIASES = {
+    "wildberries": "wb",
+    "wild_berries": "wb",
+    "yandex": "yandex_market",
+    "yandexmarket": "yandex_market",
+    "yandex_marketplace": "yandex_market",
+    "ymarket": "yandex_market",
+    "mega": "megamarket",
+    "mega_market": "megamarket",
+    "sber": "megamarket",
+    "sbermarket": "megamarket",
+    "sbermegamarket": "megamarket",
+    "sber_megamarket": "megamarket",
+    "sber_mega_market": "megamarket",
+}
 
 
 def normalize_image_size(value: str | None) -> str:
@@ -22,7 +37,8 @@ def normalize_image_size(value: str | None) -> str:
 
 
 def normalize_marketplace(value: str | None) -> str:
-    normalized = (value or "").strip().lower()
+    normalized = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = MARKETPLACE_ALIASES.get(normalized, normalized)
     return normalized if normalized in SUPPORTED_MARKETPLACES else DEFAULT_MARKETPLACE
 
 
