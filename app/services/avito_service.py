@@ -335,7 +335,14 @@ class AvitoService:
             description = "\n".join(str(point) for point in bullet_points)
 
         attributes = dict(draft.attributes)
-        for field in ("specifications", "seo_keywords", "search_queries"):
+        for field in (
+            "specifications",
+            "seo_keywords",
+            "search_queries",
+            "search_tags",
+            "search_metadata",
+            "avito_search_queries",
+        ):
             value = listing_content.get(field)
             if value:
                 attributes.setdefault(field, value)

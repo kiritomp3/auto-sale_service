@@ -34,17 +34,25 @@ ALL_MARKETPLACE = "all"
 ALL_MARKETPLACE_ALIASES = frozenset({"all", "all_marketplaces", "marketplaces", "multi", "vse", "vsyo", "все"})
 HASHTAG_MARKETPLACES = frozenset({"ozon"})
 HASHTAG_KEYS = ("hashtags", "hash_tags", "tags")
+SEO_KEYWORD_KEYS = ("seo_keywords", "keywords", "key_words", "semantic_core")
+SEARCH_QUERY_KEYS = ("search_queries", "search_requests", "search_phrases", "queries")
+SEARCH_TAG_KEYS = ("search_tags", "tags", "hashtags", "hash_tags")
 HASHTAG_SOURCE_KEYS = (
     "hashtags",
     "hash_tags",
     "tags",
+    "search_tags",
     "seo_keywords",
     "search_queries",
     "keywords",
+    "search_phrases",
+    "semantic_core",
     "title",
     "name",
     "product_name",
     "product_title",
+    "product_type",
+    "short_title",
     "category",
     "category_name",
     "product_category",
@@ -71,6 +79,36 @@ HASHTAG_STOP_WORDS = frozenset(
     }
 )
 MAX_HASHTAGS = 8
+MAX_HASHTAG_LENGTH = 30
+MAX_SEARCH_METADATA_VALUES = 20
+MAX_SEARCH_TAGS = 12
+MARKETPLACE_SEARCH_METADATA_SPECS = {
+    "wb": {
+        "type": "indexed_content_keywords",
+        "primary_field": "search_queries",
+        "extra_field": "wb_search_queries",
+    },
+    "ozon": {
+        "type": "hashtags",
+        "primary_field": "hashtags",
+        "extra_field": "hashtags",
+    },
+    "avito": {
+        "type": "classified_search_queries",
+        "primary_field": "search_queries",
+        "extra_field": "avito_search_queries",
+    },
+    "yandex_market": {
+        "type": "semantic_core",
+        "primary_field": "search_queries",
+        "extra_field": "semantic_core",
+    },
+    "megamarket": {
+        "type": "title_search_terms",
+        "primary_field": "search_queries",
+        "extra_field": "megamarket_search_terms",
+    },
+}
 MARKETPLACE_LISTING_ALIASES = {
     "wb": ("wildberries", "wb"),
     "ozon": ("ozon",),
@@ -94,6 +132,12 @@ COMMON_LISTING_KEYS = frozenset(
         "specifications",
         "seo_keywords",
         "search_queries",
+        "search_tags",
+        "search_metadata",
+        "semantic_core",
+        "wb_search_queries",
+        "avito_search_queries",
+        "megamarket_search_terms",
         "hashtags",
         "hash_tags",
         "tags",
@@ -168,12 +212,34 @@ class CardGenerationService:
 """.strip()
 
     @staticmethod
-    def _hashtags_instruction(marketplace: str) -> str:
+    def _search_metadata_instruction(marketplace: str) -> str:
         if marketplace == ALL_MARKETPLACE:
-            return "Для блока ozon обязательно заполни hashtags: 5-8 релевантных тегов без символа #, без пробелов и без выдуманных брендов."
-        if marketplace in HASHTAG_MARKETPLACES:
-            return "Заполни hashtags: 5-8 релевантных тегов для поиска, без символа #, без пробелов и без выдуманных брендов."
-        return ""
+            return (
+                "Для каждого блока marketplaces обязательно заполни seo_keywords, search_queries и search_metadata. "
+                "Для ozon дополнительно заполни hashtags: 5-8 релевантных тегов без символа #, без пробелов и без выдуманных брендов. "
+                "Для wildberries используй аналоги хештегов как поисковые фразы внутри seo_keywords/search_queries, без голого списка SEO-запросов в описании. "
+                "Для avito верни фразы, по которым покупатель ищет объявление. "
+                "Для yandex_market верни семантическое ядро. "
+                "Для megamarket верни термины для названия/бренда/модели/артикула и search_queries."
+            )
+        if marketplace == "ozon":
+            return (
+                "Заполни seo_keywords, search_queries, search_metadata и hashtags: "
+                "5-8 релевантных тегов для поиска, без символа #, без пробелов и без выдуманных брендов."
+            )
+        if marketplace == "wb":
+            return (
+                "Заполни seo_keywords, search_queries и search_metadata как аналоги хештегов для WB: "
+                "релевантные поисковые фразы нужно естественно учитывать в названии, характеристиках и описании, "
+                "без переспама и без отдельного голого списка SEO-запросов в full_description."
+            )
+        if marketplace == "avito":
+            return "Заполни seo_keywords, search_queries и search_metadata поисковыми фразами, по которым покупатель ищет такое объявление на Авито."
+        if marketplace == "yandex_market":
+            return "Заполни seo_keywords, search_queries и search_metadata как семантическое ядро для названия, характеристик и описания Яндекс Маркета."
+        if marketplace == "megamarket":
+            return "Заполни seo_keywords, search_queries и search_metadata поисковыми терминами для названия, бренда, модели, артикула и характеристик Мегамаркета."
+        return "Заполни seo_keywords, search_queries и search_metadata релевантными поисковыми фразами для карточки."
 
     @staticmethod
     def _build_listing_prompt(analysis: dict[str, Any], refinement_prompt: str, marketplace: str) -> str:
@@ -181,13 +247,13 @@ class CardGenerationService:
         if marketplace == ALL_MARKETPLACE:
             category_guidance = all_marketplace_category_prompt()
             fixed_values_guidance = all_marketplace_fixed_values_prompt()
-            hashtags_instruction = CardGenerationService._hashtags_instruction(marketplace)
+            search_metadata_instruction = CardGenerationService._search_metadata_instruction(marketplace)
             return f"""
 Сгенерируй контент карточки товара сразу для WB, Ozon, Авито, Яндекс Маркета и Мегамаркета на русском языке.
 {marketplace_listing_guidance(marketplace)}
 {category_guidance}
 {fixed_values_guidance}
-{hashtags_instruction}
+{search_metadata_instruction}
 Верни строго JSON без markdown:
 {{
   "title": str,
@@ -198,6 +264,7 @@ class CardGenerationService:
   "specifications": list[str],
   "seo_keywords": list[str],
   "search_queries": list[str],
+  "search_metadata": dict,
   "marketplaces": {{
     "wildberries": {{
       "title": str,
@@ -207,7 +274,8 @@ class CardGenerationService:
       "full_description": str,
       "specifications": list[str],
       "seo_keywords": list[str],
-      "search_queries": list[str]
+      "search_queries": list[str],
+      "search_metadata": dict
     }},
     "ozon": {{
       "title": str,
@@ -218,7 +286,8 @@ class CardGenerationService:
       "specifications": list[str],
       "seo_keywords": list[str],
       "search_queries": list[str],
-      "hashtags": list[str]
+      "hashtags": list[str],
+      "search_metadata": dict
     }},
     "avito": {{
       "title": str,
@@ -228,6 +297,7 @@ class CardGenerationService:
       "specifications": list[str],
       "seo_keywords": list[str],
       "search_queries": list[str],
+      "search_metadata": dict,
       "category": str,
       "price_hint": str,
       "location_hint": str,
@@ -242,6 +312,7 @@ class CardGenerationService:
       "specifications": list[str],
       "seo_keywords": list[str],
       "search_queries": list[str],
+      "search_metadata": dict,
       "attributes": dict
     }},
     "megamarket": {{
@@ -253,6 +324,7 @@ class CardGenerationService:
       "specifications": list[str],
       "seo_keywords": list[str],
       "search_queries": list[str],
+      "search_metadata": dict,
       "attributes": dict
     }}
   }}
@@ -280,6 +352,7 @@ class CardGenerationService:
 {marketplace_listing_guidance(marketplace)}
 {category_guidance}
 {fixed_values_guidance}
+{CardGenerationService._search_metadata_instruction(marketplace)}
 Верни строго JSON без markdown:
 {{
   "title": str,
@@ -289,6 +362,7 @@ class CardGenerationService:
   "specifications": list[str],
   "seo_keywords": list[str],
   "search_queries": list[str],
+  "search_metadata": dict,
   "category": str,
   "price": number | null,
   "price_hint": str,
@@ -309,14 +383,14 @@ class CardGenerationService:
 
         category_guidance = marketplace_category_prompt(marketplace)
         fixed_values_guidance = marketplace_fixed_values_prompt(marketplace)
-        hashtags_instruction = CardGenerationService._hashtags_instruction(marketplace)
+        search_metadata_instruction = CardGenerationService._search_metadata_instruction(marketplace)
         hashtags_schema = ',\n  "hashtags": list[str]' if marketplace in HASHTAG_MARKETPLACES else ""
         return f"""
 Сгенерируй контент карточки товара для маркетплейса {marketplace_label(marketplace)} на русском языке.
 {marketplace_listing_guidance(marketplace)}
 {category_guidance}
 {fixed_values_guidance}
-{hashtags_instruction}
+{search_metadata_instruction}
 Верни строго JSON без markdown:
 {{
   "title": str,
@@ -326,7 +400,8 @@ class CardGenerationService:
   "full_description": str,
   "specifications": list[str],
   "seo_keywords": list[str],
-  "search_queries": list[str]{hashtags_schema}
+  "search_queries": list[str]{hashtags_schema},
+  "search_metadata": dict
 }}
 Категория обязана быть ровно одним значением из списка выше.
 
@@ -447,6 +522,30 @@ class CardGenerationService:
         return candidates
 
     @staticmethod
+    def _search_phrase_candidates(value: Any) -> list[str]:
+        candidates: list[str] = []
+        for text in CardGenerationService._string_values(value):
+            for part in re.split(r"[#,\n;|/]+", text):
+                words = re.findall(r"[a-zа-яё0-9]+", part.replace("ё", "е").casefold())
+                meaningful_words = [
+                    word
+                    for word in words
+                    if len(word) >= 3 and not word.isdigit() and word not in HASHTAG_STOP_WORDS
+                ]
+                if not meaningful_words:
+                    continue
+
+                if len(meaningful_words) == 1:
+                    candidates.append(meaningful_words[0])
+                    continue
+
+                candidates.append(" ".join(meaningful_words[:6]))
+                candidates.append(" ".join(meaningful_words[: min(4, len(meaningful_words))]))
+                if len(meaningful_words) > 3:
+                    candidates.extend(word for word in meaningful_words if len(word) >= 4)
+        return candidates
+
+    @staticmethod
     def _normalize_hashtags(*values: Any) -> list[str]:
         hashtags: list[str] = []
         seen: set[str] = set()
@@ -454,14 +553,37 @@ class CardGenerationService:
         for value in values:
             for candidate in CardGenerationService._hashtag_candidates(value):
                 tag = re.sub(r"[^a-zа-я0-9]+", "", candidate.replace("ё", "е").casefold())
+                tag = tag[:MAX_HASHTAG_LENGTH]
                 if len(tag) < 2 or tag.isdigit() or tag in seen:
                     continue
                 seen.add(tag)
-                hashtags.append(tag[:40])
+                hashtags.append(tag)
                 if len(hashtags) >= MAX_HASHTAGS:
                     return hashtags
 
         return hashtags
+
+    @staticmethod
+    def _normalize_search_phrases(*values: Any, limit: int = MAX_SEARCH_METADATA_VALUES) -> list[str]:
+        phrases: list[str] = []
+        seen: set[str] = set()
+
+        for value in values:
+            for candidate in CardGenerationService._search_phrase_candidates(value):
+                phrase = re.sub(r"[^a-zа-яё0-9]+", " ", candidate.replace("ё", "е").casefold())
+                phrase = re.sub(r"\s+", " ", phrase).strip()
+                if len(phrase) < 3 or phrase.isdigit() or phrase in seen:
+                    continue
+                seen.add(phrase)
+                phrases.append(phrase[:90].strip())
+                if len(phrases) >= limit:
+                    return phrases
+
+        return phrases
+
+    @classmethod
+    def _values_for_keys(cls, source: dict[str, Any], keys: tuple[str, ...]) -> list[Any]:
+        return [cls._get_by_keys(source, (key,)) for key in keys]
 
     @classmethod
     def _ensure_marketplace_hashtags(
@@ -477,16 +599,103 @@ class CardGenerationService:
         existing_values = [cls._get_by_keys(marketplace_record, (key,)) for key in HASHTAG_KEYS]
         hashtags = cls._normalize_hashtags(*existing_values)
 
-        if not hashtags:
+        if len(hashtags) < MAX_HASHTAGS:
             source_values: list[Any] = []
             for source in (marketplace_record, listing_content, analysis):
                 source_values.extend(cls._get_by_keys(source, (key,)) for key in HASHTAG_SOURCE_KEYS)
-            hashtags = cls._normalize_hashtags(*source_values)
+            seen = set(hashtags)
+            for tag in cls._normalize_hashtags(*source_values):
+                if tag in seen:
+                    continue
+                seen.add(tag)
+                hashtags.append(tag)
+                if len(hashtags) >= MAX_HASHTAGS:
+                    break
 
         if hashtags:
             marketplace_record["hashtags"] = hashtags
             marketplace_record["hash_tags"] = hashtags
 
+        return marketplace_record
+
+    @classmethod
+    def _ensure_marketplace_search_metadata(
+        cls,
+        marketplace: str,
+        analysis: dict[str, Any],
+        listing_content: dict[str, Any],
+        marketplace_record: dict[str, Any],
+    ) -> dict[str, Any]:
+        spec = MARKETPLACE_SEARCH_METADATA_SPECS.get(marketplace)
+        if spec is None:
+            return marketplace_record
+
+        seo_values: list[Any] = []
+        query_values: list[Any] = []
+        tag_values: list[Any] = []
+        source_values: list[Any] = []
+        for source in (marketplace_record, listing_content, analysis):
+            seo_values.extend(cls._values_for_keys(source, SEO_KEYWORD_KEYS))
+            query_values.extend(cls._values_for_keys(source, SEARCH_QUERY_KEYS))
+            tag_values.extend(cls._values_for_keys(source, SEARCH_TAG_KEYS))
+            source_values.extend(cls._values_for_keys(source, HASHTAG_SOURCE_KEYS))
+            source_values.extend(
+                cls._values_for_keys(
+                    source,
+                    (
+                        "key_features",
+                        "selling_points",
+                        "usage_scenarios",
+                        "target_audience",
+                        "materials",
+                        "colors",
+                        "specifications",
+                    ),
+                )
+            )
+
+        fallback_phrases = cls._normalize_search_phrases(*source_values)
+        seo_keywords = cls._normalize_search_phrases(*seo_values) or fallback_phrases
+        search_queries = cls._normalize_search_phrases(*query_values) or seo_keywords or fallback_phrases
+        search_tags = cls._normalize_hashtags(*tag_values, search_queries, seo_keywords)[:MAX_SEARCH_TAGS]
+
+        if seo_keywords:
+            marketplace_record["seo_keywords"] = seo_keywords[:MAX_SEARCH_METADATA_VALUES]
+        if search_queries:
+            marketplace_record["search_queries"] = search_queries[:MAX_SEARCH_METADATA_VALUES]
+        if search_tags:
+            marketplace_record["search_tags"] = search_tags
+            if marketplace != "ozon":
+                marketplace_record["tags"] = search_tags
+
+        if marketplace == "ozon":
+            marketplace_record = cls._ensure_marketplace_hashtags(
+                marketplace,
+                analysis,
+                listing_content,
+                marketplace_record,
+            )
+
+        primary_field = spec["primary_field"]
+        primary_values = marketplace_record.get(primary_field)
+        normalized_primary_values = (
+            cls._normalize_hashtags(primary_values)
+            if marketplace == "ozon"
+            else cls._normalize_search_phrases(primary_values)
+        )
+        if not normalized_primary_values:
+            normalized_primary_values = search_tags if marketplace == "ozon" else search_queries
+
+        extra_field = spec.get("extra_field")
+        if extra_field and normalized_primary_values:
+            marketplace_record[extra_field] = normalized_primary_values
+
+        marketplace_record["search_metadata"] = {
+            "marketplace": marketplace_output_id(marketplace),
+            "type": spec["type"],
+            "primary_field": primary_field,
+            "values": normalized_primary_values,
+        }
         return marketplace_record
 
     @classmethod
@@ -511,7 +720,7 @@ class CardGenerationService:
             normalized_record["category_name"] = category
             normalized_record["product_category"] = category
         normalized_record = coerce_marketplace_fixed_values(marketplace, normalized_record)
-        normalized_record = cls._ensure_marketplace_hashtags(
+        normalized_record = cls._ensure_marketplace_search_metadata(
             marketplace,
             analysis,
             listing_content,
@@ -545,9 +754,15 @@ class CardGenerationService:
                 for marketplace_id, record in marketplaces.items()
                 if record.get("category")
             }
+            search_metadata = {
+                marketplace_id: record["search_metadata"]
+                for marketplace_id, record in marketplaces.items()
+                if record.get("search_metadata")
+            }
             result = dict(source_listing)
             result["marketplaces"] = marketplaces
             result["marketplace_categories"] = categories
+            result["marketplace_search_metadata"] = search_metadata
             if categories:
                 result["category"] = categories.get("wildberries") or next(iter(categories.values()))
                 result["category_name"] = result["category"]
@@ -566,6 +781,10 @@ class CardGenerationService:
         if normalized_record.get("category"):
             result["marketplace_categories"] = {
                 marketplace_output_id(normalized_marketplace): normalized_record["category"]
+            }
+        if normalized_record.get("search_metadata"):
+            result["marketplace_search_metadata"] = {
+                marketplace_output_id(normalized_marketplace): normalized_record["search_metadata"]
             }
         return result
 
