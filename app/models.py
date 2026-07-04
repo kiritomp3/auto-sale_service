@@ -86,6 +86,7 @@ class JobState(BaseModel):
     listing_content: Optional[dict[str, Any]] = None
     images: Optional[list[str]] = None  # результаты try-on
     error: Optional[str] = None
+    metadata_error: Optional[str] = None
 
 
 class OzonAuthLoginRequest(BaseModel):

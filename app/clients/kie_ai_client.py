@@ -3,9 +3,12 @@ from __future__ import annotations
 import base64
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+
+from app.clients.json_utils import parse_llm_json_object
 
 
 _SIZE_TO_ASPECT: dict[str, str] = {
@@ -130,6 +133,14 @@ class KieAIChatClient:
 
     _URL = "https://api.kie.ai/claude/v1/messages"
     _MODEL = "claude-haiku-4-5"
+    _DEFAULT_MAX_TOKENS = 4096
+    _LISTING_MAX_TOKENS = 8192
+    _REPAIR_MAX_TOKENS = 8192
+    _JSON_SYSTEM = "Return only a valid JSON object. Do not use markdown or explanatory text."
+    _JSON_REPAIR_SYSTEM = (
+        "You repair malformed JSON. Return only one valid JSON object. "
+        "Preserve fields and values from the source as much as possible. Do not use markdown."
+    )
 
     _MIME = {
         ".gif": "image/gif",
@@ -145,21 +156,88 @@ class KieAIChatClient:
             "Content-Type": "application/json",
         }
 
-    def _post(self, messages: list, system: str | None = None, max_tokens: int = 4096) -> str:
+    @dataclass(frozen=True)
+    class _TextResponse:
+        text: str
+        stop_reason: str | None
+
+    def _post_response(
+        self,
+        messages: list,
+        system: str | None = None,
+        max_tokens: int = _DEFAULT_MAX_TOKENS,
+    ) -> _TextResponse:
         body: dict = {"model": self._MODEL, "max_tokens": max_tokens, "stream": False, "messages": messages}
         if system:
             body["system"] = system
-        with httpx.Client(timeout=120) as client:
+        with httpx.Client(timeout=180) as client:
             resp = client.post(self._URL, headers=self._headers, json=body)
         resp.raise_for_status()
-        return resp.json()["content"][0]["text"]
+        payload = resp.json()
+        content = payload.get("content", [])
+        if isinstance(content, str):
+            text = content
+        else:
+            text = "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            )
+        if not text:
+            raise RuntimeError("AI вернул пустой текстовый ответ.")
+        return self._TextResponse(text=text, stop_reason=payload.get("stop_reason"))
+
+    def _post(
+        self,
+        messages: list,
+        system: str | None = None,
+        max_tokens: int = _DEFAULT_MAX_TOKENS,
+    ) -> str:
+        return self._post_response(messages, system=system, max_tokens=max_tokens).text
 
     @staticmethod
     def _parse_json(text: str) -> dict:
-        text = text.strip()
-        if text.startswith("```"):
-            text = text.strip("`").lstrip("json").strip()
-        return json.loads(text)
+        return parse_llm_json_object(text)
+
+    def _repair_json(self, raw_text: str, parse_error: Exception) -> dict:
+        repair_prompt = (
+            "The previous model response was supposed to be JSON, but parsing failed.\n"
+            f"Parser error: {parse_error}\n\n"
+            "Return only corrected valid JSON object based on this source:\n"
+            f"{raw_text}"
+        )
+        response = self._post_response(
+            [{"role": "user", "content": repair_prompt}],
+            system=self._JSON_REPAIR_SYSTEM,
+            max_tokens=self._REPAIR_MAX_TOKENS,
+        )
+        return self._parse_json(response.text)
+
+    def _post_json(
+        self,
+        messages: list,
+        *,
+        max_tokens: int = _DEFAULT_MAX_TOKENS,
+        retry_max_tokens: int | None = None,
+    ) -> dict:
+        response = self._post_response(messages, system=self._JSON_SYSTEM, max_tokens=max_tokens)
+        try:
+            return self._parse_json(response.text)
+        except (json.JSONDecodeError, ValueError) as first_error:
+            if response.stop_reason == "max_tokens" and retry_max_tokens and retry_max_tokens > max_tokens:
+                response = self._post_response(messages, system=self._JSON_SYSTEM, max_tokens=retry_max_tokens)
+                try:
+                    return self._parse_json(response.text)
+                except (json.JSONDecodeError, ValueError) as retry_error:
+                    first_error = retry_error
+
+            try:
+                return self._repair_json(response.text, first_error)
+            except (json.JSONDecodeError, ValueError) as repair_error:
+                raise RuntimeError(
+                    "AI вернул невалидный JSON с описанием карточки. "
+                    "Повторите генерацию или выберите один маркетплейс вместо всех."
+                ) from repair_error
 
     def analyze_product(self, image_path: Path, prompt: str) -> dict:
         suffix = image_path.suffix.lower()
@@ -174,11 +252,11 @@ class KieAIChatClient:
                 ],
             }
         ]
-        return self._parse_json(self._post(messages))
+        return self._post_json(messages, max_tokens=self._DEFAULT_MAX_TOKENS, retry_max_tokens=self._LISTING_MAX_TOKENS)
 
     def generate_listing(self, prompt: str) -> dict:
         messages = [{"role": "user", "content": prompt}]
-        return self._parse_json(self._post(messages))
+        return self._post_json(messages, max_tokens=self._LISTING_MAX_TOKENS)
 
     def chat(self, system: str, user_prompt: str, max_tokens: int = 1200) -> str:
         messages = [{"role": "user", "content": user_prompt}]

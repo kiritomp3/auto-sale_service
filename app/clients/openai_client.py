@@ -1,9 +1,10 @@
 import base64
-import json
 from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
+
+from app.clients.json_utils import parse_llm_json_object
 
 
 class OpenAIClient:
@@ -14,11 +15,7 @@ class OpenAIClient:
 
     @staticmethod
     def _parse_json_text(text: str) -> dict[str, Any]:
-        text = text.strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            text = text.replace("json", "", 1).strip()
-        return json.loads(text)
+        return parse_llm_json_object(text)
 
     @staticmethod
     def _encode_image_to_data_url(path: Path) -> str:

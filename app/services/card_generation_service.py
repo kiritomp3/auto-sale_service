@@ -500,6 +500,71 @@ class CardGenerationService:
         return []
 
     @staticmethod
+    def _first_string(*values: Any) -> str:
+        for value in values:
+            for text in CardGenerationService._string_values(value):
+                normalized = re.sub(r"\s+", " ", text).strip()
+                if normalized:
+                    return normalized
+        return ""
+
+    @classmethod
+    def _fallback_listing_content(cls, analysis: dict[str, Any], marketplace: str) -> dict[str, Any]:
+        title = cls._first_string(
+            analysis.get("short_title"),
+            analysis.get("product_name"),
+            analysis.get("product_type"),
+        ) or "Товар"
+        subtitle = cls._first_string(analysis.get("main_offer"), analysis.get("category"))
+
+        bullet_points: list[str] = []
+        for value in (
+            analysis.get("selling_points"),
+            analysis.get("key_features"),
+            analysis.get("usage_scenarios"),
+        ):
+            for text in cls._string_values(value):
+                normalized = re.sub(r"\s+", " ", text).strip()
+                if normalized and normalized not in bullet_points:
+                    bullet_points.append(normalized)
+                if len(bullet_points) >= 6:
+                    break
+            if len(bullet_points) >= 6:
+                break
+
+        description_parts = [
+            cls._first_string(analysis.get("main_offer")),
+            cls._first_string(analysis.get("usage_scenarios")),
+            cls._first_string(analysis.get("target_audience")),
+        ]
+        full_description = " ".join(part for part in description_parts if part) or title
+        search_values = [
+            analysis.get("product_name"),
+            analysis.get("product_type"),
+            analysis.get("category"),
+            analysis.get("brand"),
+            analysis.get("key_features"),
+            analysis.get("selling_points"),
+        ]
+        listing_content = {
+            "title": title,
+            "subtitle": subtitle,
+            "category": cls._first_string(analysis.get("category"), analysis.get("product_type")),
+            "bullet_points": bullet_points,
+            "full_description": full_description,
+            "specifications": cls._string_values(
+                {
+                    "materials": analysis.get("materials"),
+                    "colors": analysis.get("colors"),
+                }
+            )[:8],
+            "seo_keywords": cls._normalize_search_phrases(*search_values),
+            "search_queries": cls._normalize_search_phrases(*search_values),
+            "search_metadata": {},
+        }
+        return cls.normalize_listing_content(listing_content, analysis, marketplace)
+
+    @staticmethod
     def _hashtag_candidates(value: Any) -> list[str]:
         candidates: list[str] = []
         for text in CardGenerationService._string_values(value):
@@ -932,21 +997,33 @@ class CardGenerationService:
             normalized_marketplace,
             normalized_n_cards,
         )
-        listing_prompt = self._build_listing_prompt(analysis, refinement_prompt, normalized_marketplace)
-        listing_content = self._text_client.generate_listing(listing_prompt)
-        listing_content = self.normalize_listing_content(listing_content, analysis, normalized_marketplace)
+        metadata_error = None
+        try:
+            listing_prompt = self._build_listing_prompt(analysis, refinement_prompt, normalized_marketplace)
+            listing_content = self._text_client.generate_listing(listing_prompt)
+            listing_content = self.normalize_listing_content(listing_content, analysis, normalized_marketplace)
+        except Exception as error:
+            metadata_error = str(error)
+            listing_content = self._fallback_listing_content(analysis, normalized_marketplace)
 
-        return {
+        input_payload = {
+            "image_path": str(image_path),
+            "refinement_prompt": refinement_prompt,
+            "image_size": normalized_image_size,
+            "marketplace": normalized_marketplace,
+            "n_cards": normalized_n_cards,
+        }
+        if metadata_error:
+            input_payload["metadata_error"] = metadata_error
+
+        result = {
             "job_id": job_id,
             "status": "done",
-            "input": {
-                "image_path": str(image_path),
-                "refinement_prompt": refinement_prompt,
-                "image_size": normalized_image_size,
-                "marketplace": normalized_marketplace,
-                "n_cards": normalized_n_cards,
-            },
+            "input": input_payload,
             "analysis": analysis,
             "cards": cards,
             "listing_content": listing_content,
         }
+        if metadata_error:
+            result["metadata_error"] = metadata_error
+        return result
