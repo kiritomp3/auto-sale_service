@@ -74,12 +74,11 @@ def build_router(
         refinement_prompt: str = Form(default=""),
         size: str = Form(default=""),
         marketplace: str = Form(default="wb"),
-        n_cards: int = Form(default=3),
+        n_cards: int = Form(default=1),
     ) -> CardJobResponse:
         if not image.filename:
             raise HTTPException(status_code=400, detail="Файл изображения обязателен")
-        if not 1 <= n_cards <= 6:
-            raise HTTPException(status_code=400, detail="Количество карточек должно быть от 1 до 6")
+        n_cards = 1
         payload = await image.read()
         try:
             job = job_service.enqueue(payload, image.filename, refinement_prompt, size, marketplace, n_cards)

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+
+from PIL import Image, ImageOps
 
 from app.clients.kie_ai_client import KieAIChatClient, KieAIImageClient
 from app.config import DEFAULT_IMAGE_SIZE, DEFAULT_MARKETPLACE, normalize_image_size, normalize_marketplace
@@ -27,7 +30,7 @@ from app.prompts import (
 )
 
 
-DEFAULT_CARD_COUNT = 3
+DEFAULT_CARD_COUNT = 1
 MIN_CARD_COUNT = 1
 MAX_CARD_COUNT = 6
 ALL_MARKETPLACE = "all"
@@ -82,6 +85,12 @@ MAX_HASHTAGS = 8
 MAX_HASHTAG_LENGTH = 30
 MAX_SEARCH_METADATA_VALUES = 20
 MAX_SEARCH_TAGS = 12
+FALLBACK_CARD_SIZES = {
+    "1024x1024": (1024, 1024),
+    "1024x1536": (1024, 1536),
+    "1536x1024": (1536, 1024),
+    "auto": (1024, 1536),
+}
 MARKETPLACE_SEARCH_METADATA_SPECS = {
     "wb": {
         "type": "indexed_content_keywords",
@@ -158,13 +167,7 @@ COMMON_LISTING_KEYS = frozenset(
 
 
 def normalize_card_count(value: int | str | None) -> int:
-    try:
-        parsed = int(value) if value is not None else DEFAULT_CARD_COUNT
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("n_cards должен быть целым числом") from exc
-    if parsed < MIN_CARD_COUNT or parsed > MAX_CARD_COUNT:
-        raise RuntimeError(f"n_cards должен быть от {MIN_CARD_COUNT} до {MAX_CARD_COUNT}")
-    return parsed
+    return DEFAULT_CARD_COUNT
 
 
 def normalize_card_marketplace(value: str | None) -> str:
@@ -937,12 +940,30 @@ class CardGenerationService:
         index: int,
         image_size: str,
         marketplace: str,
-    ) -> tuple[int, str]:
+    ) -> tuple[int, str, str | None]:
         prompt = self._build_card_prompt(analysis, index, refinement_prompt, marketplace)
-        generated_b64 = self._image_client.generate_card_image_b64(prompt, image_path, image_size)
         output_path = self._output_dir / f"{job_id}_card_{index + 1}.png"
-        output_path.write_bytes(__import__("base64").b64decode(generated_b64))
-        return index, str(output_path)
+        try:
+            generated_b64 = self._image_client.generate_card_image_b64(prompt, image_path, image_size)
+            output_path.write_bytes(base64.b64decode(generated_b64))
+            return index, str(output_path), None
+        except Exception as error:
+            self._write_fallback_card_image(image_path, output_path, image_size)
+            return index, str(output_path), str(error)
+
+    @staticmethod
+    def _write_fallback_card_image(image_path: Path, output_path: Path, image_size: str) -> None:
+        canvas_size = FALLBACK_CARD_SIZES.get(image_size, FALLBACK_CARD_SIZES["1024x1536"])
+        with Image.open(image_path) as source:
+            source = ImageOps.exif_transpose(source).convert("RGBA")
+            canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
+            max_width = int(canvas_size[0] * 0.9)
+            max_height = int(canvas_size[1] * 0.78)
+            source.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+            x = (canvas_size[0] - source.width) // 2
+            y = (canvas_size[1] - source.height) // 2
+            canvas.alpha_composite(source, (x, y))
+            canvas.convert("RGB").save(output_path, format="PNG")
 
     def _generate_cards(
         self,
@@ -953,8 +974,9 @@ class CardGenerationService:
         image_size: str,
         marketplace: str,
         n_cards: int = DEFAULT_CARD_COUNT,
-    ) -> list[str]:
+    ) -> tuple[list[str], list[str]]:
         result_paths: dict[int, str] = {}
+        generation_errors: list[str] = []
         with ThreadPoolExecutor(max_workers=n_cards) as executor:
             futures = {
                 executor.submit(
@@ -970,9 +992,11 @@ class CardGenerationService:
                 for i in range(n_cards)
             }
             for future in as_completed(futures):
-                index, path = future.result()
+                index, path, error = future.result()
                 result_paths[index] = path
-        return [result_paths[i] for i in range(n_cards)]
+                if error:
+                    generation_errors.append(error)
+        return [result_paths[i] for i in range(n_cards)], generation_errors
 
     def build_result(
         self,
@@ -988,7 +1012,7 @@ class CardGenerationService:
         normalized_n_cards = normalize_card_count(n_cards)
         analysis_prompt = self._build_analyze_prompt(refinement_prompt)
         analysis = self._text_client.analyze_product(image_path=image_path, prompt=analysis_prompt)
-        cards = self._generate_cards(
+        cards, image_generation_errors = self._generate_cards(
             analysis,
             image_path,
             refinement_prompt,
@@ -1015,6 +1039,8 @@ class CardGenerationService:
         }
         if metadata_error:
             input_payload["metadata_error"] = metadata_error
+        if image_generation_errors:
+            input_payload["image_generation_errors"] = image_generation_errors
 
         result = {
             "job_id": job_id,
@@ -1026,4 +1052,6 @@ class CardGenerationService:
         }
         if metadata_error:
             result["metadata_error"] = metadata_error
+        if image_generation_errors:
+            result["image_generation_errors"] = image_generation_errors
         return result

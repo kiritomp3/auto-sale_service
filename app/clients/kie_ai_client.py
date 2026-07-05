@@ -19,6 +19,27 @@ _SIZE_TO_ASPECT: dict[str, str] = {
 }
 
 
+class KieAITransientError(RuntimeError):
+    pass
+
+
+def _is_transient_task_error(message: str | None) -> bool:
+    normalized = (message or "").strip().lower()
+    return any(
+        token in normalized
+        for token in (
+            "internal error",
+            "timeout",
+            "temporarily",
+            "temporary",
+            "try again",
+            "rate limit",
+            "server error",
+            "bad gateway",
+        )
+    )
+
+
 class KieAIImageClient:
     """
     Image-to-image через kie.ai GPT Image 2.
@@ -31,10 +52,11 @@ class KieAIImageClient:
     _STATUS_URL = "https://api.kie.ai/api/v1/jobs/recordInfo"
     _MODEL = "gpt-image-2-image-to-image"
 
-    def __init__(self, api_key: str, poll_interval: int = 5, timeout: int = 300):
+    def __init__(self, api_key: str, poll_interval: int = 5, timeout: int = 300, max_attempts: int = 3):
         self._headers = {"Authorization": f"Bearer {api_key}"}
         self._poll_interval = poll_interval
         self._timeout = timeout
+        self._max_attempts = max(1, max_attempts)
 
     def _upload(self, image_path: Path) -> str:
         suffix = image_path.suffix.lower().lstrip(".")
@@ -87,15 +109,34 @@ class KieAIImageClient:
                     result = json.loads(data["resultJson"])
                     return result["resultUrls"][0]
                 if state == "fail":
-                    raise RuntimeError(f"kie.ai task failed: {data.get('failMsg')}")
+                    fail_message = data.get("failMsg")
+                    if _is_transient_task_error(fail_message):
+                        raise KieAITransientError(f"kie.ai task failed: {fail_message}")
+                    raise RuntimeError(f"kie.ai task failed: {fail_message}")
                 time.sleep(self._poll_interval)
         raise TimeoutError(f"kie.ai task {task_id} не завершился за {self._timeout}с")
+
+    def _run_image_task_with_retries(self, prompt: str, image_urls: list[str], aspect_ratio: str) -> str:
+        last_error: Exception | None = None
+        for attempt in range(1, self._max_attempts + 1):
+            task_id = self._create_task(prompt, image_urls, aspect_ratio)
+            try:
+                return self._poll(task_id)
+            except KieAITransientError as exc:
+                last_error = exc
+                if attempt >= self._max_attempts:
+                    break
+                time.sleep(min(2 * attempt, 8))
+        if last_error is not None:
+            raise RuntimeError(
+                "kie.ai task failed after retries: temporary internal image provider error"
+            ) from last_error
+        raise RuntimeError("kie.ai task failed before receiving a result")
 
     def generate_card_image_b64(self, prompt: str, image_path: Path, image_size: str | None = None) -> str:
         aspect_ratio = _SIZE_TO_ASPECT.get(image_size or "", "1:1")
         image_url = self._upload(image_path)
-        task_id = self._create_task(prompt, [image_url], aspect_ratio)
-        result_url = self._poll(task_id)
+        result_url = self._run_image_task_with_retries(prompt, [image_url], aspect_ratio)
         return self._download_b64(result_url)
 
     def generate_from_images_b64(
@@ -113,8 +154,7 @@ class KieAIImageClient:
             raise ValueError("Нужно хотя бы одно изображение")
         aspect_ratio = _SIZE_TO_ASPECT.get(image_size or "", "2:3")
         image_urls = [self._upload(path) for path in image_paths]
-        task_id = self._create_task(prompt, image_urls, aspect_ratio)
-        result_url = self._poll(task_id)
+        result_url = self._run_image_task_with_retries(prompt, image_urls, aspect_ratio)
         return self._download_b64(result_url)
 
     def _download_b64(self, result_url: str) -> str:

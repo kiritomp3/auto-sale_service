@@ -147,7 +147,7 @@ class JobService:
         refinement_prompt: str,
         image_size: str | None = None,
         marketplace: str | None = None,
-        n_cards: int = 3,
+        n_cards: int = 1,
     ) -> JobState:
         job_id = uuid.uuid4().hex
         image_path = self._prepare_input_image(image_bytes, image_filename, job_id)
