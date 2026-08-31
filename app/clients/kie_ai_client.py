@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import httpx
 
 from app.clients.json_utils import parse_llm_json_object
+
+
+logger = logging.getLogger(__name__)
 
 
 _SIZE_TO_ASPECT: dict[str, str] = {
@@ -77,9 +83,12 @@ class KieAIImageClient:
     def _create_task(self, prompt: str, image_urls: list[str], aspect_ratio: str = "1:1") -> str:
         payload = {
             "model": self._MODEL,
-            "input": {"prompt": prompt, "input_urls": image_urls},
-            "aspect_ratio": aspect_ratio,
-            "resolution": "1K",
+            "input": {
+                "prompt": prompt,
+                "input_urls": image_urls,
+                "aspect_ratio": aspect_ratio,
+                "resolution": "1K",
+            },
         }
         with httpx.Client(timeout=30) as client:
             resp = client.post(
@@ -173,6 +182,11 @@ class KieAIChatClient:
 
     _URL = "https://api.kie.ai/claude/v1/messages"
     _MODEL = "claude-haiku-4-5"
+    _SERVICE_LABEL = "Claude"
+    _MAX_ATTEMPTS = 4
+    _RETRYABLE_STATUSES = {429, 500, 502, 503, 504, 529}
+    _MAX_RETRY_DELAY = 60.0
+
     _DEFAULT_MAX_TOKENS = 4096
     _LISTING_MAX_TOKENS = 8192
     _REPAIR_MAX_TOKENS = 8192
@@ -210,10 +224,7 @@ class KieAIChatClient:
         body: dict = {"model": self._MODEL, "max_tokens": max_tokens, "stream": False, "messages": messages}
         if system:
             body["system"] = system
-        with httpx.Client(timeout=180) as client:
-            resp = client.post(self._URL, headers=self._headers, json=body)
-        resp.raise_for_status()
-        payload = resp.json()
+        payload = self._request_json(body)
         content = payload.get("content", [])
         if isinstance(content, str):
             text = content
@@ -234,6 +245,63 @@ class KieAIChatClient:
         max_tokens: int = _DEFAULT_MAX_TOKENS,
     ) -> str:
         return self._post_response(messages, system=system, max_tokens=max_tokens).text
+
+    def _request_json(self, body: dict) -> dict:
+        with httpx.Client(timeout=180) as client:
+            for attempt in range(1, self._MAX_ATTEMPTS + 1):
+                delay = float(2 ** attempt)
+                try:
+                    resp = client.post(self._URL, headers=self._headers, json=body)
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code
+                    if status not in self._RETRYABLE_STATUSES:
+                        raise
+                    retry_after = self._retry_after_seconds(exc.response)
+                    # Do not retry before the provider's requested time, or
+                    # occupy a job worker with an unbounded wait.
+                    if attempt == self._MAX_ATTEMPTS or (
+                        retry_after is not None and retry_after > self._MAX_RETRY_DELAY
+                    ):
+                        raise RuntimeError(
+                            f"Сервис Kie.ai ({self._SERVICE_LABEL}) временно недоступен (HTTP {status}). "
+                            f"Не удалось выполнить запрос после {attempt} попыток. "
+                            "Попробуйте запустить задачу через несколько минут."
+                        ) from exc
+                    if retry_after is not None:
+                        delay = max(delay, retry_after)
+                    reason = f"HTTP {status}"
+                except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                    # Only connection failures are safe to retry here; after a
+                    # read/write timeout the paid request may already be running.
+                    if attempt == self._MAX_ATTEMPTS:
+                        raise RuntimeError(
+                            f"Не удалось подключиться к Kie.ai ({self._SERVICE_LABEL}) после нескольких попыток. "
+                            "Попробуйте запустить задачу через несколько минут."
+                        ) from exc
+                    reason = type(exc).__name__
+                else:
+                    return resp.json()
+                logger.warning(
+                    "Kie.ai %s request failed (%s), attempt %d/%d; retrying in %.1fs",
+                    self._SERVICE_LABEL, reason, attempt, self._MAX_ATTEMPTS, delay,
+                )
+                time.sleep(delay)
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response) -> float | None:
+        value = response.headers.get("Retry-After", "").strip()
+        if not value:
+            return None
+        if value.isascii() and value.isdigit():
+            return float(value)
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
 
     @staticmethod
     def _parse_json(text: str) -> dict:
@@ -301,3 +369,61 @@ class KieAIChatClient:
     def chat(self, system: str, user_prompt: str, max_tokens: int = 1200) -> str:
         messages = [{"role": "user", "content": user_prompt}]
         return self._post(messages, system=system, max_tokens=max_tokens)
+
+
+class KieAIGeminiChatClient(KieAIChatClient):
+    """Gemini text and vision through Kie.ai's Chat Completions endpoint.
+
+    Reuses retries and listing/chat methods; overrides the Claude wire format.
+    """
+
+    _URL = "https://api.kie.ai/gemini-2.5-flash/v1/chat/completions"
+    _MODEL = "gemini-2.5-flash"
+    _SERVICE_LABEL = "Gemini"
+
+    def __init__(self, api_key: str):
+        super().__init__(api_key)
+        self._image_client = KieAIImageClient(api_key)
+
+    def _post_response(
+        self, messages: list, system: str | None = None, max_tokens: int = 4096,
+    ) -> KieAIChatClient._TextResponse:
+        if system:
+            messages = [{"role": "system", "content": system}, *messages]
+        body = {
+            "messages": messages,
+            "stream": False,
+            "include_thoughts": False,
+            "max_tokens": max_tokens,
+        }
+        result = self._request_json(body)
+        # Kie.ai can return application errors with HTTP 200.
+        if result.get("error") or result.get("code", 200) != 200:
+            code = result.get("code", "api_error")
+            raise RuntimeError(f"Kie.ai (Gemini) отклонил запрос (код {code}).")
+        choices = result.get("choices") or []
+        if not choices:
+            raise RuntimeError("Kie.ai (Gemini) не вернул текст ответа.")
+        choice = choices[0]
+        text = (choice.get("message") or {}).get("content")
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("Kie.ai (Gemini) не вернул текст ответа.")
+        stop_reason = choice.get("finish_reason")
+        if stop_reason == "length":
+            stop_reason = "max_tokens"
+        return self._TextResponse(text=text, stop_reason=stop_reason)
+
+    def analyze_product(self, image_path: Path, prompt: str) -> dict:
+        # The Gemini gateway rejects large inline images. Upload the original
+        # file instead so normal phone photos do not hit the data-URL limit.
+        image_url = self._image_client._upload(image_path)
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": image_url}},
+            ],
+        }]
+        return self._post_json(
+            messages, max_tokens=self._DEFAULT_MAX_TOKENS, retry_max_tokens=self._LISTING_MAX_TOKENS,
+        )

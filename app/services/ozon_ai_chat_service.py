@@ -119,8 +119,8 @@ def _build_prompt(insights: OzonInsightsResponse, question: str) -> str:
 
 
 class OzonAIChatService:
-    def __init__(self, kie_ai_client: KieAIChatClient, insights_service: OzonInsightsService):
-        self._kie = kie_ai_client
+    def __init__(self, text_client: KieAIChatClient, insights_service: OzonInsightsService):
+        self._text_client = text_client
         self._insights = insights_service
 
     def chat(
@@ -144,7 +144,7 @@ class OzonAIChatService:
         )
 
         user_prompt = _build_prompt(insights, question)
-        answer = self._kie.chat(system=_SYSTEM_PROMPT, user_prompt=user_prompt, max_tokens=1200)
+        answer = self._text_client.chat(system=_SYSTEM_PROMPT, user_prompt=user_prompt, max_tokens=1200)
         period = f"{current_date_from} — {current_date_to}"
 
         return OzonAIChatResponse(
