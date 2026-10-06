@@ -16,11 +16,14 @@ class Vision:
         self.path = None
         self.calls = 0
         self.broken = False
+        self.seen_format = None
 
     def analyze_product(self, path, prompt):
         self.path = path
         self.calls += 1
         assert path.is_file()
+        with Image.open(path) as image:
+            self.seen_format = image.format
         assert "seo_score" in prompt
         result = {key: 67 for key in ["total_score", "image_score", "infographic_score", "readability_score", "offer_score", "competitiveness_score"]}
         result.update(seo_score=None, problems=["Проблема 1", "Проблема 2", "Проблема 3"], recommendations=["Рекомендация 1", "Рекомендация 2", "Рекомендация 3"], strengths=["Сильная сторона"], suggested_actions=[{"kind": "image", "label": "Создать главное фото", "prompt": "Улучшить фон"}])
@@ -59,6 +62,12 @@ class AnalyzerTests(unittest.TestCase):
     def test_gateway_key_required_before_ai(self):
         self.assertEqual(self.upload(key="wrong").status_code, 403)
         self.assertEqual(self.vision.calls, 0)
+
+    def test_phone_mpo_jpeg_uses_plain_first_frame_for_vision(self):
+        data = io.BytesIO()
+        Image.new("RGB", (100, 100), "white").save(data, "MPO", save_all=True, append_images=[Image.new("RGB", (100, 100), "black")])
+        self.assertEqual(self.upload(data.getvalue(), mime="image/jpeg").status_code, 200)
+        self.assertEqual(self.vision.seen_format, "JPEG")
 
     def test_corrupt_mime_and_size_rejected_before_ai(self):
         self.assertEqual(self.upload(b"not an image").status_code, 415)

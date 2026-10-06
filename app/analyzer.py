@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field
 
 Score = Annotated[int, Field(strict=True, ge=0, le=100)]
@@ -53,13 +53,22 @@ def build_analyzer_router(client):
             import io
             with Image.open(io.BytesIO(payload)) as source:
                 fmt = source.format
-                if fmt not in {"PNG", "JPEG", "WEBP"} or source.width * source.height > 25_000_000:
+                if fmt not in {"PNG", "JPEG", "MPO", "WEBP"} or source.width * source.height > 25_000_000:
                     raise ValueError("Unsupported image")
                 source.verify()
+            # Phone JPEGs may contain an MPO auxiliary frame (e.g. a depth map).
+            # Send a plain first-frame JPEG to vision, preserving the original for the generator.
+            is_mpo = fmt == "MPO"
+            if is_mpo:
+                fmt = "JPEG"
             if image.content_type != {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}[fmt]:
                 raise ValueError("MIME mismatch")
             with Image.open(io.BytesIO(payload)) as decoded:
                 decoded.load()
+                if is_mpo:
+                    normalized = io.BytesIO()
+                    ImageOps.exif_transpose(decoded).convert("RGB").save(normalized, "JPEG", quality=95)
+                    payload = normalized.getvalue()
         except (ValueError, OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
             raise HTTPException(415, "Загрузите корректный PNG, JPEG или WebP (до 25 Мп)") from exc
         prompt = (
