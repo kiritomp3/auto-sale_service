@@ -58,6 +58,8 @@ def build_analyzer_router(client):
                 source.verify()
             if image.content_type != {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}[fmt]:
                 raise ValueError("MIME mismatch")
+            with Image.open(io.BytesIO(payload)) as decoded:
+                decoded.load()
         except (ValueError, OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
             raise HTTPException(415, "Загрузите корректный PNG, JPEG или WebP (до 25 Мп)") from exc
         prompt = (

@@ -74,6 +74,14 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(self.upload().status_code, 502)
         self.assertFalse(self.vision.path.exists())
 
+    def test_application_wires_active_vision_client(self):
+        # Import the real application to detect a stale Container attribute after changes.
+        with patch.dict(os.environ, {"KIE_AI_API_KEY": "local-fixture-no-network"}):
+            import main
+        with patch.object(main.container.text_client, "analyze_product", side_effect=self.vision.analyze_product):
+            response = TestClient(main.app).post("/internal/analyze", headers={"X-Analyzer-Key": self.key}, files={"image": ("card.png", self.image, "image/png")})
+        self.assertEqual(response.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()
