@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import build_router
 from app.config import Settings
 from app.container import Container
+from app.analyzer import build_analyzer_router
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+app.include_router(build_analyzer_router(container.kie_ai_chat_client))
 settings.models_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/output", StaticFiles(directory=settings.output_dir), name="output")
 app.mount("/models", StaticFiles(directory=settings.models_dir), name="models")

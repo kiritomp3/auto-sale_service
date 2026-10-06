@@ -11,6 +11,7 @@ services:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - ANALYZER_INTERNAL_KEY=${ANALYZER_INTERNAL_KEY:-}
       - GENERATION_IMAGE_SIZE=${GENERATION_IMAGE_SIZE:-1024x1536}
     volumes:
       - ./output:/app/output
