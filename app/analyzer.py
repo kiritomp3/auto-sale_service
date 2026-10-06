@@ -2,6 +2,7 @@
 import asyncio
 import hmac
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -89,5 +90,7 @@ def build_analyzer_router(client):
                     result = await asyncio.to_thread(client.analyze_product, path, prompt)
                     return Analysis.model_validate(result)
                 except Exception as exc:
+                    logging.getLogger(__name__).warning("Analyzer upstream failure: %s", type(exc).__name__)
                     raise HTTPException(502, "Не удалось завершить AI-анализ. Повторите позже.") from exc
     return router
+

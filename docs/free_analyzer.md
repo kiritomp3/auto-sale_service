@@ -7,4 +7,9 @@
 
 Новых таблиц/Redis ключей/миграций здесь нет. Endpoint не генерирует изображения и не списывает токены; квоты находятся в существующем web auth backend. Приватные файлы не попадают в `/output`.
 
-Проверка: `python -m unittest discover -s tests -v` (4 tests: key, decoding/MIME/size/dimensions, schema, cleanup). Реальный provider call требует `KIE_AI_API_KEY` и staging smoke-test. Парный web PR содержит endpoint inventory, все 10 events, funnel KPI, screenshots и ручной сценарий. Развернуть API перед web; автоматического deploy из feature branch нет. Revert этого PR и предыдущий образ откатывают endpoint без изменения существующих job данных.
+Проверка: `python -m unittest discover -s tests -v` (6 analyzer/bootstrap tests + 20 existing: key, decoding/MIME/size/dimensions, schema, cleanup, startup wiring, phone MPO JPEG). Реальный provider call требует `KIE_AI_API_KEY` и staging smoke-test. Парный web PR содержит endpoint inventory, все 10 events, funnel KPI, screenshots и ручной сценарий. Развернуть API перед web; автоматического deploy из feature branch нет. Revert этого PR и предыдущий образ откатывают endpoint без изменения существующих job данных.
+
+Фотографии JPEG с дополнительным MPO кадром принимаются как JPEG: в vision отправляется первый кадр с учётом EXIF orientation, исходник сохраняется для генератора. Ошибка upstream логируется только по типу исключения, без ключей, изображения или AI-ответа.
+
+Staging 6 октября 2026: Docker API/auth/frontend собраны и запущены в изолированной сети; upload в Kie успешен. Реальный Gemini 2.5 Flash возвращает HTTP-200 JSON code=422, msg=The channel is not supported. Это внешний блокер успешного vision и связанного real generation smoke-test; квота успешного анализа не списывается. Production не изменён.
+
