@@ -50,7 +50,7 @@ class KieGeminiClientTests(unittest.TestCase):
             self.assertEqual(self.client.analyze_product(path, "Analyze"), {"product_name": "Мышь"})
             self.upload.assert_called_once_with(path)
         request = self.requests[0]
-        self.assertIn("/gemini-2.5-flash/", str(request.url))
+        self.assertIn("/gemini-3-8-flash-openai/", str(request.url))
         body = json.loads(request.content)
         parts = body["messages"][-1]["content"]
         self.assertEqual(parts[0], {"type": "text", "text": "Analyze"})
@@ -58,6 +58,7 @@ class KieGeminiClientTests(unittest.TestCase):
             "url": "https://example.com/product.png",
         }})
         self.assertFalse(body["include_thoughts"])
+        self.assertEqual(body["model"], "gemini-3-8-flash")
 
     def test_failed_upload_does_not_submit_analysis(self):
         self.upload.side_effect = RuntimeError("upload failed")
@@ -96,7 +97,7 @@ class KieGeminiClientTests(unittest.TestCase):
         self.responses(self.success('{"title":', finish_reason="length"), self.success('{"title":"Мышь"}'))
         self.assertEqual(self.client.generate_listing("JSON listing"), {"title": "Мышь"})
         self.assertEqual(len(self.requests), 2)
-        self.assertTrue(all("/gemini-2.5-flash/" in str(request.url) for request in self.requests))
+        self.assertTrue(all("/gemini-3-8-flash-openai/" in str(request.url) for request in self.requests))
         repair = json.loads(self.requests[1].content)
         self.assertIn("repair malformed JSON", repair["messages"][0]["content"])
         self.sleep.assert_not_called()
@@ -119,3 +120,4 @@ class KieGeminiClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

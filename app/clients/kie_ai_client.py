@@ -377,8 +377,8 @@ class KieAIGeminiChatClient(KieAIChatClient):
     Reuses retries and listing/chat methods; overrides the Claude wire format.
     """
 
-    _URL = "https://api.kie.ai/gemini-2.5-flash/v1/chat/completions"
-    _MODEL = "gemini-2.5-flash"
+    _URL = "https://api.kie.ai/gemini-3-8-flash-openai/v1/chat/completions"
+    _MODEL = "gemini-3-8-flash"
     _SERVICE_LABEL = "Gemini"
 
     def __init__(self, api_key: str):
@@ -391,6 +391,7 @@ class KieAIGeminiChatClient(KieAIChatClient):
         if system:
             messages = [{"role": "system", "content": system}, *messages]
         body = {
+            "model": self._MODEL,
             "messages": messages,
             "stream": False,
             "include_thoughts": False,
@@ -427,3 +428,4 @@ class KieAIGeminiChatClient(KieAIChatClient):
         return self._post_json(
             messages, max_tokens=self._DEFAULT_MAX_TOKENS, retry_max_tokens=self._LISTING_MAX_TOKENS,
         )
+
