@@ -11,5 +11,10 @@
 
 Фотографии JPEG с дополнительным MPO кадром принимаются как JPEG: в vision отправляется первый кадр с учётом EXIF orientation, исходник сохраняется для генератора. Ошибка upstream логируется только по типу исключения, без ключей, изображения или AI-ответа.
 
-Staging 6 октября 2026: Docker API/auth/frontend собраны и запущены в изолированной сети; upload в Kie успешен. Реальный Gemini 2.5 Flash возвращает HTTP-200 JSON code=422, msg=The channel is not supported. Это внешний блокер успешного vision и связанного real generation smoke-test; квота успешного анализа не списывается. Production не изменён.
+Staging 6 октября 2026: Docker API/auth/frontend собраны и запущены в изолированной сети; upload в Kie успешен. Старый Gemini 2.5 Flash возвращал HTTP-200 JSON code=422, msg=The channel is not supported. 7 октября клиент переключён на рабочий Gemini 3.8 Flash (`/gemini-3-8-flash-openai/v1/chat/completions`) с явным model. Реальный vision на фото 12 Мп прошёл за 23 с, генерация — за 108 с; проверены сохранение результата, исходник/prompt в генераторе, списание и готовое изображение. Production не изменён.
+
+
+HTTPS staging: https://staging.auto-sell.site/analyze. Сертификат Let's Encrypt и автообновление, отдельные Redis/auth/output volumes, noindex. Настоящие Google/Яндекс callback URL добавлены к существующим OAuth клиентам; production callbacks сохранены. Fixture OAuth выключен, /stage-oauth/ закрыт. Production приложение не обновлялось.
+
+Документация канала: https://docs.kie.ai/market/gemini/gemini-3-8-flash-openai .
 
