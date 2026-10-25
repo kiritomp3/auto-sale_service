@@ -29,6 +29,15 @@ class KieAITransientError(RuntimeError):
     pass
 
 
+class KieAIResponseError(RuntimeError):
+    """Provider failure metadata that can be logged without response contents."""
+
+    def __init__(self, message: str, *, kind: str, provider_code: int | None = None):
+        super().__init__(message)
+        self.failure_kind = kind
+        self.provider_code = provider_code if type(provider_code) is int and 100 <= provider_code <= 599 else None
+
+
 def _is_transient_task_error(message: str | None) -> bool:
     normalized = (message or "").strip().lower()
     return any(
@@ -77,7 +86,8 @@ class KieAIImageClient:
         resp.raise_for_status()
         body = resp.json()
         if not body.get("success"):
-            raise RuntimeError(f"kie.ai upload failed: {body.get('msg')}")
+            raise KieAIResponseError(f"kie.ai upload failed: {body.get('msg')}",
+                                     kind="upload_failed", provider_code=body.get("code"))
         return body["data"]["downloadUrl"]
 
     def _create_task(self, prompt: str, image_urls: list[str], aspect_ratio: str = "1:1") -> str:
@@ -246,6 +256,9 @@ class KieAIChatClient:
     ) -> str:
         return self._post_response(messages, system=system, max_tokens=max_tokens).text
 
+    def _application_error(self, payload: dict) -> KieAIResponseError | None:
+        return None
+
     def _request_json(self, body: dict) -> dict:
         with httpx.Client(timeout=180) as client:
             for attempt in range(1, self._MAX_ATTEMPTS + 1):
@@ -253,24 +266,30 @@ class KieAIChatClient:
                 try:
                     resp = client.post(self._URL, headers=self._headers, json=body)
                     resp.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    status = exc.response.status_code
+                    payload = resp.json()
+                    application_error = self._application_error(payload)
+                    if application_error:
+                        raise application_error
+                except (httpx.HTTPStatusError, KieAIResponseError) as exc:
+                    is_http_error = isinstance(exc, httpx.HTTPStatusError)
+                    status = exc.response.status_code if is_http_error else exc.provider_code
                     if status not in self._RETRYABLE_STATUSES:
                         raise
-                    retry_after = self._retry_after_seconds(exc.response)
+                    retry_after = self._retry_after_seconds(exc.response if is_http_error else resp)
+                    status_kind = "HTTP" if is_http_error else "API"
                     # Do not retry before the provider's requested time, or
                     # occupy a job worker with an unbounded wait.
                     if attempt == self._MAX_ATTEMPTS or (
                         retry_after is not None and retry_after > self._MAX_RETRY_DELAY
                     ):
                         raise RuntimeError(
-                            f"Сервис Kie.ai ({self._SERVICE_LABEL}) временно недоступен (HTTP {status}). "
+                            f"Сервис Kie.ai ({self._SERVICE_LABEL}) временно недоступен ({status_kind} {status}). "
                             f"Не удалось выполнить запрос после {attempt} попыток. "
                             "Попробуйте запустить задачу через несколько минут."
                         ) from exc
                     if retry_after is not None:
                         delay = max(delay, retry_after)
-                    reason = f"HTTP {status}"
+                    reason = f"{status_kind} {status}"
                 except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                     # Only connection failures are safe to retry here; after a
                     # read/write timeout the paid request may already be running.
@@ -281,7 +300,7 @@ class KieAIChatClient:
                         ) from exc
                     reason = type(exc).__name__
                 else:
-                    return resp.json()
+                    return payload
                 logger.warning(
                     "Kie.ai %s request failed (%s), attempt %d/%d; retrying in %.1fs",
                     self._SERVICE_LABEL, reason, attempt, self._MAX_ATTEMPTS, delay,
@@ -342,9 +361,10 @@ class KieAIChatClient:
             try:
                 return self._repair_json(response.text, first_error)
             except (json.JSONDecodeError, ValueError) as repair_error:
-                raise RuntimeError(
+                raise KieAIResponseError(
                     "AI вернул невалидный JSON с описанием карточки. "
-                    "Повторите генерацию или выберите один маркетплейс вместо всех."
+                    "Повторите генерацию или выберите один маркетплейс вместо всех.",
+                    kind="invalid_json",
                 ) from repair_error
 
     def analyze_product(self, image_path: Path, prompt: str) -> dict:
@@ -385,6 +405,16 @@ class KieAIGeminiChatClient(KieAIChatClient):
         super().__init__(api_key)
         self._image_client = KieAIImageClient(api_key)
 
+    def _application_error(self, payload: dict) -> KieAIResponseError | None:
+        if not isinstance(payload, dict):
+            return KieAIResponseError("Kie.ai (Gemini) вернул некорректный ответ.", kind="invalid_response")
+        if payload.get("error") or payload.get("code", 200) != 200:
+            code = payload.get("code")
+            safe_code = code if type(code) is int and 100 <= code <= 599 else None
+            return KieAIResponseError(f"Kie.ai (Gemini) отклонил запрос (код {safe_code or 'api_error'}).",
+                                     kind="application_error", provider_code=safe_code)
+        return None
+
     def _post_response(
         self, messages: list, system: str | None = None, max_tokens: int = 4096,
     ) -> KieAIChatClient._TextResponse:
@@ -398,17 +428,13 @@ class KieAIGeminiChatClient(KieAIChatClient):
             "max_tokens": max_tokens,
         }
         result = self._request_json(body)
-        # Kie.ai can return application errors with HTTP 200.
-        if result.get("error") or result.get("code", 200) != 200:
-            code = result.get("code", "api_error")
-            raise RuntimeError(f"Kie.ai (Gemini) отклонил запрос (код {code}).")
         choices = result.get("choices") or []
         if not choices:
-            raise RuntimeError("Kie.ai (Gemini) не вернул текст ответа.")
+            raise KieAIResponseError("Kie.ai (Gemini) не вернул текст ответа.", kind="empty_response")
         choice = choices[0]
         text = (choice.get("message") or {}).get("content")
         if not isinstance(text, str) or not text.strip():
-            raise RuntimeError("Kie.ai (Gemini) не вернул текст ответа.")
+            raise KieAIResponseError("Kie.ai (Gemini) не вернул текст ответа.", kind="empty_response")
         stop_reason = choice.get("finish_reason")
         if stop_reason == "length":
             stop_reason = "max_tokens"

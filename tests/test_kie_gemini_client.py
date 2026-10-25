@@ -88,6 +88,28 @@ class KieGeminiClientTests(unittest.TestCase):
             self.client.chat("System", "Question")
         self.sleep.assert_not_called()
 
+    def test_http_200_temporary_failure_recovers_without_changing_request(self):
+        self.responses(httpx.Response(200, json={"code": 503, "msg": "Temporarily unavailable"}),
+                       self.success('{"product_name":"Мышь"}'))
+        self.assertEqual(self.client.generate_listing("JSON listing"), {"product_name": "Мышь"})
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.requests[0].content, self.requests[1].content)
+        self.sleep.assert_called_once_with(2)
+
+    def test_http_200_temporary_failure_stops_at_attempt_limit(self):
+        self.responses(*[httpx.Response(200, json={"code": 500, "msg": "Internal error"}) for _ in range(4)])
+        with self.assertRaises(RuntimeError):
+            self.client.chat("System", "Question")
+        self.assertEqual(len(self.requests), 4)
+        self.assertEqual(self.sleep.call_count, 3)
+
+    def test_http_200_failure_respects_provider_backoff_limit(self):
+        self.responses(httpx.Response(200, json={"code": 429, "msg": "Rate limited"}, headers={"Retry-After":"120"}))
+        with self.assertRaises(RuntimeError):
+            self.client.chat("System", "Question")
+        self.assertEqual(len(self.requests), 1)
+        self.sleep.assert_not_called()
+
     def test_empty_response_is_rejected(self):
         self.responses(httpx.Response(200, json={"choices": []}))
         with self.assertRaisesRegex(RuntimeError, "не вернул текст"):
