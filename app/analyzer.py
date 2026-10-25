@@ -8,9 +8,10 @@ import tempfile
 from pathlib import Path
 from typing import Annotated, Literal
 
+import httpx
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 Score = Annotated[int, Field(strict=True, ge=0, le=100)]
 Text = Annotated[str, Field(min_length=1, max_length=600)]
@@ -36,6 +37,33 @@ class Analysis(BaseModel):
     recommendations: Annotated[list[Text], Field(min_length=3, max_length=7)]
     strengths: Annotated[list[Text], Field(max_length=5)]
     suggested_actions: Annotated[list[Action], Field(min_length=1, max_length=4)]
+
+
+def _failure_diagnostics(error: Exception) -> tuple[str, int | None]:
+    """Classify failures; never log messages, validation inputs or response bodies."""
+    current = error
+    seen = set()
+    kinds = {"application_error", "upload_failed", "invalid_json", "empty_response", "invalid_response"}
+    for _ in range(5):
+        if current is None or id(current) in seen:
+            break
+        seen.add(id(current))
+        kind = getattr(current, "failure_kind", None)
+        if isinstance(kind, str) and kind in kinds:
+            code = getattr(current, "provider_code", None)
+            return kind, code if type(code) is int and 100 <= code <= 599 else None
+        if isinstance(current, httpx.HTTPStatusError):
+            return "http_status", current.response.status_code
+        if isinstance(current, ValidationError):
+            return "invalid_schema", None
+        if isinstance(current, json.JSONDecodeError):
+            return "invalid_json", None
+        if isinstance(current, httpx.TimeoutException):
+            return "timeout", None
+        if isinstance(current, httpx.ConnectError):
+            return "connection", None
+        current = current.__cause__ or current.__context__
+    return "unknown", None
 
 
 def build_analyzer_router(client):
@@ -90,7 +118,11 @@ def build_analyzer_router(client):
                     result = await asyncio.to_thread(client.analyze_product, path, prompt)
                     return Analysis.model_validate(result)
                 except Exception as exc:
-                    logging.getLogger(__name__).warning("Analyzer upstream failure: %s", type(exc).__name__)
+                    reason, provider_code = _failure_diagnostics(exc)
+                    logging.getLogger(__name__).warning(
+                        "Analyzer upstream failure: type=%s reason=%s provider_code=%s",
+                        type(exc).__name__, reason, provider_code,
+                    )
                     raise HTTPException(502, "Не удалось завершить AI-анализ. Повторите позже.") from exc
     return router
 
