@@ -35,7 +35,7 @@ cd wbcards
 Создайте `.env`:
 
 ```env
-OPENAI_API_KEY=sk-...
+KIE_AI_API_KEY=...
 GENERATION_IMAGE_SIZE=1024x1536
 ```
 

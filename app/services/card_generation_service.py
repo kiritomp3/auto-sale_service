@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageOps
-
-from app.clients.kie_ai_client import KieAIChatClient, KieAIImageClient
+from app.clients.kie_ai_client import (
+    KieAIChatClient, KieAIImageClient, KieAIResponseError,
+    generation_error_details, generation_error_message,
+)
 from app.config import DEFAULT_IMAGE_SIZE, DEFAULT_MARKETPLACE, normalize_image_size, normalize_marketplace
 from app.marketplace_categories import (
     ALL_MARKETPLACE_TARGETS,
@@ -29,6 +31,8 @@ from app.prompts import (
     marketplace_listing_guidance,
 )
 
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CARD_COUNT = 1
 MIN_CARD_COUNT = 1
@@ -85,12 +89,6 @@ MAX_HASHTAGS = 8
 MAX_HASHTAG_LENGTH = 30
 MAX_SEARCH_METADATA_VALUES = 20
 MAX_SEARCH_TAGS = 12
-FALLBACK_CARD_SIZES = {
-    "1024x1024": (1024, 1024),
-    "1024x1536": (1024, 1536),
-    "1536x1024": (1536, 1024),
-    "auto": (1024, 1536),
-}
 MARKETPLACE_SEARCH_METADATA_SPECS = {
     "wb": {
         "type": "indexed_content_keywords",
@@ -948,22 +946,12 @@ class CardGenerationService:
             output_path.write_bytes(base64.b64decode(generated_b64))
             return index, str(output_path), None
         except Exception as error:
-            self._write_fallback_card_image(image_path, output_path, image_size)
-            return index, str(output_path), str(error)
-
-    @staticmethod
-    def _write_fallback_card_image(image_path: Path, output_path: Path, image_size: str) -> None:
-        canvas_size = FALLBACK_CARD_SIZES.get(image_size, FALLBACK_CARD_SIZES["1024x1536"])
-        with Image.open(image_path) as source:
-            source = ImageOps.exif_transpose(source).convert("RGBA")
-            canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
-            max_width = int(canvas_size[0] * 0.9)
-            max_height = int(canvas_size[1] * 0.78)
-            source.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
-            x = (canvas_size[0] - source.width) // 2
-            y = (canvas_size[1] - source.height) // 2
-            canvas.alpha_composite(source, (x, y))
-            canvas.convert("RGB").save(output_path, format="PNG")
+            # An unchanged source photo is not a generated card. Preserve real
+            # successes only, and let the job fail when none can be delivered.
+            kind, code = generation_error_details(error)
+            logger.warning("Card image generation failed: type=%s reason=%s provider_code=%s",
+                           type(error).__name__, kind, code)
+            return index, "", generation_error_message(error)
 
     def _generate_cards(
         self,
@@ -993,10 +981,15 @@ class CardGenerationService:
             }
             for future in as_completed(futures):
                 index, path, error = future.result()
-                result_paths[index] = path
                 if error:
                     generation_errors.append(error)
-        return [result_paths[i] for i in range(n_cards)], generation_errors
+                else:
+                    result_paths[index] = path
+        if not result_paths:
+            reason = generation_errors[0] if generation_errors else "пустой ответ сервиса"
+            message = f"Не удалось сгенерировать изображения карточки. {reason}"
+            raise KieAIResponseError(message, kind="image_generation_failed", safe_message=message)
+        return [result_paths[i] for i in sorted(result_paths)], generation_errors
 
     def build_result(
         self,
@@ -1027,7 +1020,10 @@ class CardGenerationService:
             listing_content = self._text_client.generate_listing(listing_prompt)
             listing_content = self.normalize_listing_content(listing_content, analysis, normalized_marketplace)
         except Exception as error:
-            metadata_error = str(error)
+            kind, code = generation_error_details(error)
+            logger.warning("Card listing generation failed: type=%s reason=%s provider_code=%s",
+                           type(error).__name__, kind, code)
+            metadata_error = generation_error_message(error)
             listing_content = self._fallback_listing_content(analysis, normalized_marketplace)
 
         input_payload = {

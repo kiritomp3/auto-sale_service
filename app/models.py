@@ -87,6 +87,7 @@ class JobState(BaseModel):
     images: Optional[list[str]] = None  # результаты try-on
     error: Optional[str] = None
     metadata_error: Optional[str] = None
+    image_generation_errors: list[str] = Field(default_factory=list)
 
 
 class OzonAuthLoginRequest(BaseModel):

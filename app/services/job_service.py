@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
@@ -8,11 +9,13 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 
 from app.models import JobState
+from app.clients.kie_ai_client import generation_error_details, generation_error_message
 from app.repositories.job_repository import RedisJobRepository
 from app.services.card_generation_service import CardGenerationService
 
 
 register_heif_opener()
+logger = logging.getLogger(__name__)
 
 HEIF_IMAGE_BRANDS = {"heic", "heix", "hevc", "hevx", "mif1", "msf1"}
 HEIF_IMAGE_EXTENSIONS = {".heic", ".heif"}
@@ -138,7 +141,10 @@ class JobService:
             result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             self._job_repository.save(JobState(**result))
         except Exception as error:
-            self._job_repository.save(JobState(job_id=job_id, status="failed", error=str(error)))
+            kind, code = generation_error_details(error)
+            logger.warning("Card job failed: type=%s reason=%s provider_code=%s",
+                           type(error).__name__, kind, code)
+            self._job_repository.save(JobState(job_id=job_id, status="failed", error=generation_error_message(error)))
 
     def enqueue(
         self,

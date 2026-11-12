@@ -115,6 +115,21 @@ class KieGeminiClientTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "не вернул текст"):
             self.client.chat("System", "Question")
 
+    def test_known_provider_reasons_are_readable_without_echoing_private_details(self):
+        private = "https://private.example/image?token=secret"
+        cases = [
+            (402, "Insufficient Credits", "балансе"),
+            (422, "The channel is not supported", "не поддерживается"),
+            (401, "Unauthorized", "ключ доступа"),
+            (400, "Invalid request", "параметры запроса"),
+        ]
+        for code, message, expected in cases:
+            with self.subTest(code=code):
+                error = self.client._application_error({"code": code, "msg": message + " " + private})
+                self.assertIn(expected, str(error))
+                self.assertNotIn(private, str(error))
+                self.assertEqual(error.provider_code, code)
+
     def test_truncated_listing_is_repaired_by_gemini(self):
         self.responses(self.success('{"title":', finish_reason="length"), self.success('{"title":"Мышь"}'))
         self.assertEqual(self.client.generate_listing("JSON listing"), {"title": "Мышь"})

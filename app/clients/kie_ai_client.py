@@ -32,10 +32,54 @@ class KieAITransientError(RuntimeError):
 class KieAIResponseError(RuntimeError):
     """Provider failure metadata that can be logged without response contents."""
 
-    def __init__(self, message: str, *, kind: str, provider_code: int | None = None):
+    def __init__(self, message: str, *, kind: str, provider_code: int | None = None,
+                 safe_message: str | None = None):
         super().__init__(message)
         self.failure_kind = kind
         self.provider_code = provider_code if type(provider_code) is int and 100 <= provider_code <= 599 else None
+        self.safe_message = safe_message
+
+
+def generation_error_details(error: Exception) -> tuple[str, int | None]:
+    """Return stable diagnostic tags without copying provider response text."""
+    current = error
+    visited = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if isinstance(current, KieAIResponseError):
+            return current.failure_kind, current.provider_code
+        if isinstance(current, KieAITransientError):
+            return "image_task_temporary", None
+        if isinstance(current, httpx.HTTPStatusError):
+            return "http_status", current.response.status_code
+        if isinstance(current, (httpx.TimeoutException, TimeoutError)):
+            return "timeout", None
+        if isinstance(current, httpx.ConnectError):
+            return "connection", None
+        current = current.__cause__ or current.__context__
+    return "unknown", None
+
+
+def generation_error_message(error: Exception) -> str:
+    """Public job errors must not contain URLs, keys, prompts or response bodies."""
+    if isinstance(error, KieAIResponseError) and error.safe_message:
+        return error.safe_message
+    kind, code = generation_error_details(error)
+    if code in {401, 403}:
+        return "Проверьте ключ доступа к сервису генерации."
+    if code == 402:
+        return "Недостаточно средств на балансе сервиса генерации."
+    if code in {429, 433}:
+        return "Достигнут лимит запросов к сервису генерации. Повторите позже."
+    if kind == "upload_failed":
+        return "Не удалось загрузить фото в сервис генерации. Повторите позже."
+    if kind == "invalid_json":
+        return "Сервис генерации вернул некорректное описание. Повторите запрос."
+    if kind == "timeout":
+        return "Сервис генерации не ответил вовремя. Повторите позже."
+    if code in {400, 422}:
+        return "Сервис генерации отклонил параметры запроса или изображение."
+    return "Сервис генерации временно недоступен. Повторите позже."
 
 
 def _is_transient_task_error(message: str | None) -> bool:
@@ -86,7 +130,7 @@ class KieAIImageClient:
         resp.raise_for_status()
         body = resp.json()
         if not body.get("success"):
-            raise KieAIResponseError(f"kie.ai upload failed: {body.get('msg')}",
+            raise KieAIResponseError("Не удалось загрузить фото в сервис генерации.",
                                      kind="upload_failed", provider_code=body.get("code"))
         return body["data"]["downloadUrl"]
 
@@ -109,7 +153,8 @@ class KieAIImageClient:
         resp.raise_for_status()
         body = resp.json()
         if body.get("code") != 200:
-            raise RuntimeError(f"kie.ai createTask failed: {body.get('msg')}")
+            raise KieAIResponseError("Сервис отклонил генерацию изображения.",
+                                     kind="image_task_rejected", provider_code=body.get("code"))
         return body["data"]["taskId"]
 
     def _poll(self, task_id: str) -> str:
@@ -130,8 +175,9 @@ class KieAIImageClient:
                 if state == "fail":
                     fail_message = data.get("failMsg")
                     if _is_transient_task_error(fail_message):
-                        raise KieAITransientError(f"kie.ai task failed: {fail_message}")
-                    raise RuntimeError(f"kie.ai task failed: {fail_message}")
+                        raise KieAITransientError("Временная ошибка сервиса изображений.")
+                    raise KieAIResponseError("Сервис не смог сгенерировать изображение.",
+                                             kind="image_task_failed", provider_code=data.get("failCode"))
                 time.sleep(self._poll_interval)
         raise TimeoutError(f"kie.ai task {task_id} не завершился за {self._timeout}с")
 
@@ -411,8 +457,26 @@ class KieAIGeminiChatClient(KieAIChatClient):
         if payload.get("error") or payload.get("code", 200) != 200:
             code = payload.get("code")
             safe_code = code if type(code) is int and 100 <= code <= 599 else None
-            return KieAIResponseError(f"Kie.ai (Gemini) отклонил запрос (код {safe_code or 'api_error'}).",
-                                     kind="application_error", provider_code=safe_code)
+            # Classify known reasons instead of echoing provider messages,
+            # which can include signed image URLs or request contents.
+            message = str(payload.get("msg") or payload.get("error") or "").lower()
+            if safe_code in {401, 403}:
+                reason = "Проверьте ключ доступа к сервису генерации."
+            elif safe_code == 402 or any(word in message for word in ("insufficient credit", "insufficient balance")):
+                reason = "Недостаточно средств на балансе сервиса генерации."
+            elif any(word in message for word in ("channel is not supported", "unsupported model", "model not found", "model is not available")):
+                reason = "Канал модели больше не поддерживается сервисом генерации."
+            elif safe_code in {429, 433}:
+                reason = "Достигнут лимит запросов к сервису генерации."
+            elif safe_code in {400, 422}:
+                reason = "Сервис генерации отклонил параметры запроса или изображение."
+            elif safe_code in {455, 500, 502, 503, 504, 529}:
+                reason = "Сервис генерации временно недоступен."
+            else:
+                reason = "Сервис генерации не смог обработать запрос."
+            safe_message = f"Kie.ai (Gemini) отклонил запрос (код {safe_code or 'api_error'}). {reason}"
+            return KieAIResponseError(safe_message, kind="application_error", provider_code=safe_code,
+                                     safe_message=safe_message)
         return None
 
     def _post_response(
